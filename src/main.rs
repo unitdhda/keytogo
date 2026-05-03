@@ -18,23 +18,29 @@ fn main() {
     )
     .init();
 
+    // Service management doesn't require Accessibility — handle before the check.
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("--install-service")   => { menu::cli_install_service();   return; }
+        Some("--uninstall-service") => { menu::cli_uninstall_service(); return; }
+        _ => {}
+    }
+
     if !accessibility::is_trusted(true) {
         eprintln!(
             "keytogo needs Accessibility permission.\n\
-             System Settings → Privacy & Security → Accessibility → enable keytogo.\n\
-             Restart after granting permission."
+             Open System Settings → Privacy & Security → Accessibility,\n\
+             click +, navigate to ~/.cargo/bin/, select keytogo, and toggle it ON.\n\
+             Then run keytogo again."
         );
         std::process::exit(1);
     }
 
     log::info!("Accessibility permission granted.");
 
-    let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("--test-mouse")       => { mouse::smoke_test(); return; }
-        Some("--test-state")       => { test_state(); return; }
-        Some("--install-service")  => { menu::cli_install_service(); return; }
-        Some("--uninstall-service")=> { menu::cli_uninstall_service(); return; }
+        Some("--test-mouse") => { mouse::smoke_test(); return; }
+        Some("--test-state") => { test_state(); return; }
         _ => {}
     }
 
