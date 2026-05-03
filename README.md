@@ -167,8 +167,6 @@ Common configuration options include:
 
 For more detailed information, see:
 
-- [UX Design](./docs/ux-design.md) — Interaction model and state machine
-- [Developer Knowledge](./docs/dev-knowledge.md) — Architecture and implementation details
 - [Configuration](./docs/config.md) — All config keys and examples
 - [Testing](./docs/testing.md) — Test coverage and CLI flags
 
