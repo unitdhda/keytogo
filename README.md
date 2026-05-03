@@ -169,7 +169,3 @@ For more detailed information, see:
 
 - [Configuration](./docs/config.md) — All config keys and examples
 - [Testing](./docs/testing.md) — Test coverage and CLI flags
-
-## License
-
-See LICENSE file in the repository.
