@@ -84,17 +84,16 @@ fn draw_grid_a(view: &OverlayView, macro_first: Option<char>) {
     let macro_l = &layouts.macro_l;
     let sub_l   = &layouts.sub_l;
 
-    let g  = layout_geom(sw, sh, macro_l.num_cols, macro_l.num_rows, sub_l.num_cols, sub_l.num_rows);
-    let ss = g.sub_size;
+    let g = layout_geom(sw, sh, macro_l.num_cols, macro_l.num_rows, sub_l.num_cols, sub_l.num_rows);
 
     draw_dim_bg(bounds);
 
     for row in 0..macro_l.num_rows {
         for col in 0..macro_l.num_cols {
             let macro_key = macro_l.keys[row][col];
-            // Centered grid origin; NSView y increases upward.
-            let mx = g.offset_x + col as f64 * g.macro_w;
-            let my = sh - g.offset_y - (row + 1) as f64 * g.macro_h;
+            // Grid fills screen edge to edge; NSView y increases upward.
+            let mx = col as f64 * g.macro_w;
+            let my = sh - (row + 1) as f64 * g.macro_h;
             let macro_rect = NSRect {
                 origin: NSPoint { x: mx, y: my },
                 size: NSSize { width: g.macro_w, height: g.macro_h },
@@ -110,18 +109,18 @@ fn draw_grid_a(view: &OverlayView, macro_first: Option<char>) {
             for sr in 0..sub_l.num_rows {
                 for sc in 0..sub_l.num_cols {
                     let sub_key = sub_l.keys[sr][sc];
-                    let sx = mx + sc as f64 * ss;
+                    let sx = mx + sc as f64 * g.cell_w;
                     // sr=0 is visual top → highest NSView y
-                    let sy = my + (sub_l.num_rows - 1 - sr) as f64 * ss;
+                    let sy = my + (sub_l.num_rows - 1 - sr) as f64 * g.cell_h;
                     let sub_rect = NSRect {
                         origin: NSPoint { x: sx, y: sy },
-                        size: NSSize { width: ss, height: ss },
+                        size: NSSize { width: g.cell_w, height: g.cell_h },
                     };
                     stroke_rect(sub_rect, 1.0, 1.0, 1.0, sub_alpha * 0.5);
                     draw_label_alpha(
                         &format!("{}{}", macro_key, sub_key),
-                        sx + ss * 0.20,
-                        sy + ss * 0.28,
+                        sx + g.cell_w * 0.10,
+                        sy + g.cell_h * 0.28,
                         10.0,
                         sub_alpha,
                     );
@@ -151,25 +150,24 @@ fn draw_subcell_layer(view: &OverlayView, cell_x: f64, cell_y: f64, cell_w: f64,
     let sc_cols = subcell_l.num_cols;
     let sc_rows = subcell_l.num_rows;
 
-    // Square sub-cells centered within the selected cell.
-    let sc_size     = (cell_w / sc_cols as f64).min(cell_h / sc_rows as f64);
-    let sc_offset_x = (cell_w - sc_size * sc_cols as f64) / 2.0;
-    let sc_offset_y = (cell_h - sc_size * sc_rows as f64) / 2.0;
+    // Subcell grid fills the entire selected cell — cells are rectangular.
+    let sc_w = cell_w / sc_cols as f64;
+    let sc_h = cell_h / sc_rows as f64;
 
     for row in 0..sc_rows {
         for col in 0..sc_cols {
             let key = subcell_l.keys[row][col];
-            let x = cell_x + sc_offset_x + col as f64 * sc_size;
+            let x = cell_x + col as f64 * sc_w;
             // row=0 is visual top → highest NSView y
-            let y = nsview_y + sc_offset_y + (sc_rows - 1 - row) as f64 * sc_size;
+            let y = nsview_y + (sc_rows - 1 - row) as f64 * sc_h;
             let sub_rect = NSRect {
                 origin: NSPoint { x, y },
-                size: NSSize { width: sc_size, height: sc_size },
+                size: NSSize { width: sc_w, height: sc_h },
             };
 
             fill_rect(sub_rect, 0.0, 1.0, 0.533, 0.12);
             stroke_rect(sub_rect, 0.0, 1.0, 0.533, 0.70);
-            draw_label(&key.to_string(), x + sc_size * 0.3, y + sc_size * 0.35, 10.0);
+            draw_label(&key.to_string(), x + sc_w * 0.15, y + sc_h * 0.25, 10.0);
         }
     }
 }

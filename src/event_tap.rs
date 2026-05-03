@@ -315,10 +315,10 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
                         layouts.macro_l.num_cols, layouts.macro_l.num_rows,
                         layouts.sub_l.num_cols,   layouts.sub_l.num_rows,
                     );
-                    let cell_x = g.offset_x + macro_col as f64 * g.macro_w + sub_col as f64 * g.sub_size;
-                    let cell_y = g.offset_y + macro_row as f64 * g.macro_h + sub_row as f64 * g.sub_size;
+                    let cell_x = macro_col as f64 * g.macro_w + sub_col as f64 * g.cell_w;
+                    let cell_y = macro_row as f64 * g.macro_h + sub_row as f64 * g.cell_h;
 
-                    let bounds = CellBounds::new(cell_x, cell_y, g.sub_size, g.sub_size);
+                    let bounds = CellBounds::new(cell_x, cell_y, g.cell_w, g.cell_h);
                     mouse::move_cursor(bounds.center_x(), bounds.center_y());
                     // Option alone = move cursor only; Option+Shift = proceed to subcell for drag
                     if flags & FLAGS_OPTION != 0 && flags & FLAGS_SHIFT == 0 {
@@ -491,18 +491,15 @@ fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
 // ── Subcell geometry ───────────────────────────────────────────────────────
 
 /// Pixel position of a subcell key within the given cell bounds.
-/// Sub-cells are square and centered within the cell.
+/// The subcell grid fills the entire cell — cells are rectangular.
 fn subcell_pos(key: char, bounds: &CellBounds) -> Option<CGPoint> {
     let subcell_l = &config::parsed_layouts().subcell_l;
     let (sub_col, sub_row) = subcell_l.key_pos(key)?;
-    let sc_cols = subcell_l.num_cols;
-    let sc_rows = subcell_l.num_rows;
-    let sc_size     = (bounds.w / sc_cols as f64).min(bounds.h / sc_rows as f64);
-    let sc_offset_x = (bounds.w - sc_size * sc_cols as f64) / 2.0;
-    let sc_offset_y = (bounds.h - sc_size * sc_rows as f64) / 2.0;
+    let sc_w = bounds.w / subcell_l.num_cols as f64;
+    let sc_h = bounds.h / subcell_l.num_rows as f64;
     Some(CGPoint::new(
-        bounds.x + sc_offset_x + sub_col as f64 * sc_size + sc_size * 0.5,
-        bounds.y + sc_offset_y + sub_row as f64 * sc_size + sc_size * 0.5,
+        bounds.x + sub_col as f64 * sc_w + sc_w * 0.5,
+        bounds.y + sub_row as f64 * sc_h + sc_h * 0.5,
     ))
 }
 
@@ -620,46 +617,43 @@ mod tests {
         layout: &crate::keymap::ParsedLayout,
     ) -> Option<CGPoint> {
         let (sub_col, sub_row) = layout.key_pos(key)?;
-        let sc_cols = layout.num_cols;
-        let sc_rows = layout.num_rows;
-        let sc_size     = (bounds.w / sc_cols as f64).min(bounds.h / sc_rows as f64);
-        let sc_offset_x = (bounds.w - sc_size * sc_cols as f64) / 2.0;
-        let sc_offset_y = (bounds.h - sc_size * sc_rows as f64) / 2.0;
+        let sc_w = bounds.w / layout.num_cols as f64;
+        let sc_h = bounds.h / layout.num_rows as f64;
         Some(CGPoint::new(
-            bounds.x + sc_offset_x + sub_col as f64 * sc_size + sc_size * 0.5,
-            bounds.y + sc_offset_y + sub_row as f64 * sc_size + sc_size * 0.5,
+            bounds.x + sub_col as f64 * sc_w + sc_w * 0.5,
+            bounds.y + sub_row as f64 * sc_h + sc_h * 0.5,
         ))
     }
 
     #[test]
     fn subcell_pos_top_left_key() {
-        // 'e' is col 0, row 0 — square cells (600/6 = 100), no offset
+        // 'e' is col 0, row 0 — fills cell, no centering offset
         let layout = make_subcell_layout();
         let bounds = CellBounds::new(0.0, 0.0, 600.0, 300.0);
         let pos = subcell_pos_with_layout('e', &bounds, &layout).unwrap();
-        let scw = 600.0 / layout.num_cols as f64;
-        let sch = 300.0 / layout.num_rows as f64;
-        assert!((pos.x - scw * 0.5).abs() < 1e-9);
-        assert!((pos.y - sch * 0.5).abs() < 1e-9);
+        let sc_w = 600.0 / layout.num_cols as f64;
+        let sc_h = 300.0 / layout.num_rows as f64;
+        assert!((pos.x - sc_w * 0.5).abs() < 1e-9);
+        assert!((pos.y - sc_h * 0.5).abs() < 1e-9);
     }
 
     #[test]
     fn subcell_pos_bottom_right_key() {
-        // 'm' is col 5, row 2 — should land at bottom-right subcell center
+        // 'm' is col 5, row 2 — bottom-right cell center
         let layout = make_subcell_layout();
         let bounds = CellBounds::new(0.0, 0.0, 600.0, 300.0);
         let pos = subcell_pos_with_layout('m', &bounds, &layout).unwrap();
-        let scw = 600.0 / layout.num_cols as f64;
-        let sch = 300.0 / layout.num_rows as f64;
-        assert!((pos.x - (5.0 * scw + scw * 0.5)).abs() < 1e-9);
-        assert!((pos.y - (2.0 * sch + sch * 0.5)).abs() < 1e-9);
+        let sc_w = 600.0 / layout.num_cols as f64;
+        let sc_h = 300.0 / layout.num_rows as f64;
+        assert!((pos.x - (5.0 * sc_w + sc_w * 0.5)).abs() < 1e-9);
+        assert!((pos.y - (2.0 * sc_h + sc_h * 0.5)).abs() < 1e-9);
     }
 
     #[test]
     fn subcell_pos_unknown_key_returns_none() {
         let layout = make_subcell_layout();
         let bounds = CellBounds::new(0.0, 0.0, 600.0, 300.0);
-        assert!(subcell_pos_with_layout('z', &bounds, &layout).is_none()); // 'z' not in layout
+        assert!(subcell_pos_with_layout('z', &bounds, &layout).is_none());
     }
 
     // event_mask ──────────────────────────────────────────────────────────────

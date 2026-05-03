@@ -61,47 +61,33 @@ pub fn parse_layout_string(s: &str) -> Result<ParsedLayout, String> {
 // ── Grid geometry ──────────────────────────────────────────────────────────
 
 /// Screen geometry for the two-stage macro/sub layout.
-/// Sub-cells are square; macro cells and full grid are derived from them.
+/// Every layer fills its parent exactly — cells are rectangular, no margins.
 pub struct LayoutGeom {
-    /// Square sub-cell side length (px).
-    pub sub_size: f64,
-    /// Macro cell width  = sub_cols × sub_size.
-    pub macro_w:  f64,
-    /// Macro cell height = sub_rows × sub_size.
-    pub macro_h:  f64,
-    /// Total grid width  = macro_cols × macro_w.
-    pub grid_w:   f64,
-    /// Total grid height = macro_rows × macro_h.
-    pub grid_h:   f64,
-    /// Left margin that centers the grid on screen.
-    pub offset_x: f64,
-    /// Top margin that centers the grid (screen-y-from-top).
-    pub offset_y: f64,
+    /// Stage-2 sub-cell width  = sw / (macro_cols × sub_cols).
+    pub cell_w:  f64,
+    /// Stage-2 sub-cell height = sh / (macro_rows × sub_rows).
+    pub cell_h:  f64,
+    /// Macro cell width  = cell_w × sub_cols.
+    pub macro_w: f64,
+    /// Macro cell height = cell_h × sub_rows.
+    pub macro_h: f64,
 }
 
 /// Compute layout geometry from screen and parsed layout dimensions.
-/// `sub_size` is the largest square that fits the full
-/// `(macro_cols × sub_cols) × (macro_rows × sub_rows)` grid on screen.
+/// The full grid fills the screen exactly; each layer divides its parent
+/// into equal-sized rectangular cells.
 pub fn layout_geom(
     sw: f64, sh: f64,
     macro_cols: usize, macro_rows: usize,
     sub_cols:   usize, sub_rows:   usize,
 ) -> LayoutGeom {
-    let total_cols = (macro_cols * sub_cols) as f64;
-    let total_rows = (macro_rows * sub_rows) as f64;
-    let sub_size   = (sw / total_cols).min(sh / total_rows);
-    let macro_w    = sub_size * sub_cols as f64;
-    let macro_h    = sub_size * sub_rows as f64;
-    let grid_w     = macro_w * macro_cols as f64;
-    let grid_h     = macro_h * macro_rows as f64;
+    let cell_w = sw / (macro_cols * sub_cols) as f64;
+    let cell_h = sh / (macro_rows * sub_rows) as f64;
     LayoutGeom {
-        sub_size,
-        macro_w,
-        macro_h,
-        grid_w,
-        grid_h,
-        offset_x: (sw - grid_w) / 2.0,
-        offset_y: (sh - grid_h) / 2.0,
+        cell_w,
+        cell_h,
+        macro_w: cell_w * sub_cols as f64,
+        macro_h: cell_h * sub_rows as f64,
     }
 }
 
@@ -231,38 +217,29 @@ mod tests {
     // ── layout_geom ───────────────────────────────────────────────────────
 
     #[test]
-    fn layout_geom_square_subcells() {
-        // 4×6 macro, 7×3 sub — default layout
-        let g = layout_geom(1440.0, 900.0, 4, 6, 7, 3);
-        assert!((g.macro_w - 7.0 * g.sub_size).abs() < 1e-9);
-        assert!((g.macro_h - 3.0 * g.sub_size).abs() < 1e-9);
-    }
-
-    #[test]
-    fn layout_geom_fits_screen() {
+    fn layout_geom_fills_screen_exactly() {
         for (sw, sh) in [(1440.0_f64, 900.0), (2560.0, 1440.0), (1920.0, 1080.0)] {
             let g = layout_geom(sw, sh, 4, 6, 7, 3);
-            assert!(g.grid_w <= sw + 1e-9, "grid_w {:.1} > sw {sw}", g.grid_w);
-            assert!(g.grid_h <= sh + 1e-9, "grid_h {:.1} > sh {sh}", g.grid_h);
-            assert!(g.offset_x >= -1e-9);
-            assert!(g.offset_y >= -1e-9);
+            let grid_w = g.macro_w * 4.0;
+            let grid_h = g.macro_h * 6.0;
+            assert!((grid_w - sw).abs() < 1e-9, "grid_w {grid_w:.1} != sw {sw}");
+            assert!((grid_h - sh).abs() < 1e-9, "grid_h {grid_h:.1} != sh {sh}");
         }
     }
 
     #[test]
-    fn layout_geom_fills_one_axis() {
+    fn layout_geom_macro_derived_from_cells() {
         let g = layout_geom(1440.0, 900.0, 4, 6, 7, 3);
-        let fills_w = (g.grid_w - 1440.0).abs() < 1e-9;
-        let fills_h = (g.grid_h -  900.0).abs() < 1e-9;
-        assert!(fills_w || fills_h, "grid should fill at least one screen dimension");
+        assert!((g.macro_w - g.cell_w * 7.0).abs() < 1e-9);
+        assert!((g.macro_h - g.cell_h * 3.0).abs() < 1e-9);
     }
 
     #[test]
     fn layout_geom_dynamic_dimensions() {
-        // Verify the geometry adapts to arbitrary layout sizes
+        // 3×4 macro, 5×3 sub on 1920×1080: cell_w=1920/15=128, cell_h=1080/12=90
         let g = layout_geom(1920.0, 1080.0, 3, 4, 5, 3);
-        // total 15×12 sub-cells; sub_size = min(1920/15, 1080/12) = min(128, 90) = 90
-        assert!((g.sub_size - 90.0).abs() < 1e-9);
+        assert!((g.cell_w - 128.0).abs() < 1e-9);
+        assert!((g.cell_h -  90.0).abs() < 1e-9);
     }
 
     // ── keycode table ──────────────────────────────────────────────────────
