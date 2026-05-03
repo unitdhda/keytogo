@@ -44,7 +44,7 @@ keytogo
 Press the activation chord to show the grid overlay:
 
 ```
-Right-Cmd + Left-Cmd + Space
+Right-Cmd + Space
 ```
 
 This displays a full-screen grid overlay. Press Escape to hide it without selecting.
@@ -61,10 +61,6 @@ A two-stage selection process:
 2. **SubcellMode stage**: After selecting a cell, a 7×3 grid appears to pick the exact sub-position within that cell
 
 Press any labeled key to select a cell, then use the SubcellMode grid to refine the position.
-
-#### Grid Layout
-
-A flat two-character label grid for direct single-stage selection. Each cell has a two-letter label; press both keys in sequence to select.
 
 ### SubcellMode Reference
 
