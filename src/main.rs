@@ -4,8 +4,13 @@ mod accessibility;
 mod config;
 mod event_tap;
 mod keymap;
+mod menu;
 mod mouse;
+mod overlay;
 mod state;
+
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+use objc2_foundation::MainThreadMarker;
 
 fn main() {
     env_logger::Builder::from_env(
@@ -26,13 +31,24 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("--test-mouse") => mouse::smoke_test(),
-        Some("--test-state") => test_state(),
-        _ => {
-            log::info!("Event tap starting — press any key to see keycodes. Ctrl-C to quit.");
-            event_tap::run();
-        }
+        Some("--test-mouse")       => { mouse::smoke_test(); return; }
+        Some("--test-state")       => { test_state(); return; }
+        Some("--install-service")  => { menu::cli_install_service(); return; }
+        Some("--uninstall-service")=> { menu::cli_uninstall_service(); return; }
+        _ => {}
     }
+
+    // Safety: main() is the entry point and runs on the main thread.
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+
+    overlay::init(mtm);
+    menu::install(mtm);
+    event_tap::install();
+
+    log::info!("event tap installed — press Ctrl+Alt+Space to activate grid");
+    unsafe { app.run(); }
 }
 
 fn test_state() {

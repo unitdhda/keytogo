@@ -1,4 +1,5 @@
 use std::os::raw::c_void;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::state::ClickButton;
 
@@ -45,7 +46,7 @@ impl CGPoint {
 // ── FFI types ──────────────────────────────────────────────────────────────
 
 type CGEventRef       = *mut c_void;
-type CGEventSourceRef = *const c_void;
+type CGEventSourceRef = *mut c_void;
 
 // ── CGEventType ────────────────────────────────────────────────────────────
 
@@ -71,9 +72,23 @@ const K_CG_MOUSE_EVENT_CLICK_STATE: u32 = 1;
 // ── CGScrollEventUnit / CGEventTapLocation ─────────────────────────────────
 
 const K_CG_SCROLL_EVENT_UNIT_LINE: u32 = 1;
-const K_CG_HID_EVENT_TAP: u32 = 0;
+// kCGSessionEventTap: inject at the session boundary, correct for app-targeted events.
+const K_CG_SESSION_EVENT_TAP: u32 = 1;
+
+// ── CGEventSource state ────────────────────────────────────────────────────
+
+// kCGEventSourceStateCombinedSessionState: correct for user-session processes.
+const K_CG_EVENT_SOURCE_STATE_COMBINED_SESSION: u32 = 1;
 
 // ── Framework bindings ─────────────────────────────────────────────────────
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventCreate(source: CGEventSourceRef) -> CGEventRef;
+    fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
+    fn CGEventSourceCreate(state_id: u32) -> CGEventSourceRef;
+    fn CGEventSourceSetLocalEventsSuppressionInterval(source: CGEventSourceRef, seconds: f64);
+}
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
@@ -96,16 +111,76 @@ extern "C" {
     ) -> CGEventRef;
 
     fn CGEventSetIntegerValueField(event: CGEventRef, field: u32, value: i64);
+    // Zeroing flags before post strips any live modifier state inherited from the HID table.
+    fn CGEventSetFlags(event: CGEventRef, flags: u64);
     fn CGEventPost(tap: u32, event: CGEventRef);
     fn CGWarpMouseCursorPosition(new_cursor_position: CGPoint);
     fn CFRelease(cf: *const c_void);
 }
 
+// ── Event source singleton ─────────────────────────────────────────────────
+
+// Lazily created on first use. Using an explicit source:
+//   • eliminates modifier-flag contamination (NULL source inherits live HID flags)
+//   • allows zeroing the 0.25 s hardware-event suppression interval
+static EVENT_SOURCE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+fn event_source() -> CGEventSourceRef {
+    let ptr = EVENT_SOURCE.load(Ordering::Acquire);
+    if !ptr.is_null() {
+        return ptr;
+    }
+    unsafe {
+        let src = CGEventSourceCreate(K_CG_EVENT_SOURCE_STATE_COMBINED_SESSION);
+        if !src.is_null() {
+            CGEventSourceSetLocalEventsSuppressionInterval(src, 0.0);
+            EVENT_SOURCE.store(src, Ordering::Release);
+        }
+        src
+    }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
+
+/// Returns the current cursor position by querying a null CGEvent.
+pub fn cursor_pos() -> CGPoint {
+    unsafe {
+        let ev = CGEventCreate(std::ptr::null_mut());
+        let pt = CGEventGetLocation(ev);
+        CFRelease(ev as *const c_void);
+        pt
+    }
+}
 
 /// Instantly teleport the cursor without generating a move event.
 pub fn move_cursor(x: f64, y: f64) {
     unsafe { CGWarpMouseCursorPosition(CGPoint::new(x, y)) }
+}
+
+/// Post a mouse-button-down event only. Pair with `mouse_up` for hold behaviour.
+pub fn mouse_down(pos: CGPoint, button: ClickButton) {
+    let (down_type, _, btn) = button_event_types(button);
+    unsafe {
+        let ev = CGEventCreateMouseEvent(event_source(), down_type, pos, btn);
+        if !ev.is_null() {
+            CGEventSetFlags(ev, 0);
+            CGEventPost(K_CG_SESSION_EVENT_TAP, ev);
+            CFRelease(ev as *const c_void);
+        }
+    }
+}
+
+/// Post a mouse-button-up event. Called on key release after `mouse_down`.
+pub fn mouse_up(pos: CGPoint, button: ClickButton) {
+    let (_, up_type, btn) = button_event_types(button);
+    unsafe {
+        let ev = CGEventCreateMouseEvent(event_source(), up_type, pos, btn);
+        if !ev.is_null() {
+            CGEventSetFlags(ev, 0);
+            CGEventPost(K_CG_SESSION_EVENT_TAP, ev);
+            CFRelease(ev as *const c_void);
+        }
+    }
 }
 
 /// Click at `pos` with the given button and click count.
@@ -116,15 +191,21 @@ pub fn click(pos: CGPoint, button: ClickButton, count: u8) {
     let (down_type, up_type, btn) = button_event_types(button);
     unsafe {
         for n in 1..=count {
-            let down = CGEventCreateMouseEvent(std::ptr::null(), down_type, pos, btn);
-            CGEventSetIntegerValueField(down, K_CG_MOUSE_EVENT_CLICK_STATE, n as i64);
-            CGEventPost(K_CG_HID_EVENT_TAP, down);
-            CFRelease(down as *const c_void);
+            let down = CGEventCreateMouseEvent(event_source(), down_type, pos, btn);
+            if !down.is_null() {
+                CGEventSetIntegerValueField(down, K_CG_MOUSE_EVENT_CLICK_STATE, n as i64);
+                CGEventSetFlags(down, 0);
+                CGEventPost(K_CG_SESSION_EVENT_TAP, down);
+                CFRelease(down as *const c_void);
+            }
 
-            let up = CGEventCreateMouseEvent(std::ptr::null(), up_type, pos, btn);
-            CGEventSetIntegerValueField(up, K_CG_MOUSE_EVENT_CLICK_STATE, n as i64);
-            CGEventPost(K_CG_HID_EVENT_TAP, up);
-            CFRelease(up as *const c_void);
+            let up = CGEventCreateMouseEvent(event_source(), up_type, pos, btn);
+            if !up.is_null() {
+                CGEventSetIntegerValueField(up, K_CG_MOUSE_EVENT_CLICK_STATE, n as i64);
+                CGEventSetFlags(up, 0);
+                CGEventPost(K_CG_SESSION_EVENT_TAP, up);
+                CFRelease(up as *const c_void);
+            }
         }
     }
 }
@@ -139,52 +220,63 @@ pub fn click(pos: CGPoint, button: ClickButton, count: u8) {
 pub fn scroll(dy: i32, dx: i32) {
     unsafe {
         let ev = CGEventCreateScrollWheelEvent2(
-            std::ptr::null(),
+            event_source(),
             K_CG_SCROLL_EVENT_UNIT_LINE,
             2, // wheel_count: 2 enables both axes
             dy,
             dx,
             0,
         );
-        CGEventPost(K_CG_HID_EVENT_TAP, ev);
-        CFRelease(ev as *const c_void);
+        if !ev.is_null() {
+            CGEventSetFlags(ev, 0);
+            CGEventPost(K_CG_SESSION_EVENT_TAP, ev);
+            CFRelease(ev as *const c_void);
+        }
     }
 }
 
 /// Press and hold at `from`, move to `to`, release.
 ///
 /// Posts: LeftMouseDown → CGWarp → LeftMouseDragged → LeftMouseUp.
-/// For Phase 5 drag mode the from/to come from two grid selections.
 pub fn drag(from: CGPoint, to: CGPoint) {
     unsafe {
         let down = CGEventCreateMouseEvent(
-            std::ptr::null(),
+            event_source(),
             K_CG_EVENT_LEFT_MOUSE_DOWN,
             from,
             K_CG_MOUSE_BUTTON_LEFT,
         );
-        CGEventPost(K_CG_HID_EVENT_TAP, down);
-        CFRelease(down as *const c_void);
+        if !down.is_null() {
+            CGEventSetFlags(down, 0);
+            CGEventPost(K_CG_SESSION_EVENT_TAP, down);
+            CFRelease(down as *const c_void);
+        }
 
         CGWarpMouseCursorPosition(to);
 
         let dragged = CGEventCreateMouseEvent(
-            std::ptr::null(),
+            event_source(),
             K_CG_EVENT_LEFT_MOUSE_DRAGGED,
             to,
             K_CG_MOUSE_BUTTON_LEFT,
         );
-        CGEventPost(K_CG_HID_EVENT_TAP, dragged);
-        CFRelease(dragged as *const c_void);
+        if !dragged.is_null() {
+            CGEventSetFlags(dragged, 0);
+            CGEventPost(K_CG_SESSION_EVENT_TAP, dragged);
+            CFRelease(dragged as *const c_void);
+        }
 
         let up = CGEventCreateMouseEvent(
-            std::ptr::null(),
+            event_source(),
             K_CG_EVENT_LEFT_MOUSE_UP,
             to,
             K_CG_MOUSE_BUTTON_LEFT,
         );
-        CGEventPost(K_CG_HID_EVENT_TAP, up);
-        CFRelease(up as *const c_void);
+        if !up.is_null() {
+            CGEventSetFlags(up, 0);
+            CGEventPost(K_CG_SESSION_EVENT_TAP, up);
+            CFRelease(up as *const c_void);
+        }
     }
 }
 
@@ -206,60 +298,27 @@ pub fn smoke_test() {
     println!("Focus any window (e.g. TextEdit). Starting in 3 seconds...\n");
     sleep(Duration::from_secs(3));
 
-    step("move_cursor → screen center", || {
-        move_cursor(center.x, center.y);
-    });
+    step("move_cursor → screen center", || move_cursor(center.x, center.y));
     sleep(Duration::from_millis(400));
-
-    step("click left ×1", || {
-        click(center, ClickButton::Left, 1);
-    });
+    step("click left ×1", || click(center, ClickButton::Left, 1));
     sleep(Duration::from_millis(400));
-
-    step("click left ×2 (double)", || {
-        click(center, ClickButton::Left, 2);
-    });
+    step("click left ×2 (double)", || click(center, ClickButton::Left, 2));
     sleep(Duration::from_millis(400));
-
-    step("click left ×3 (triple)", || {
-        click(center, ClickButton::Left, 3);
-    });
+    step("click left ×3 (triple)", || click(center, ClickButton::Left, 3));
     sleep(Duration::from_millis(400));
-
-    step("click right ×1 (context menu)", || {
-        click(center, ClickButton::Right, 1);
-    });
+    step("click right ×1 (context menu)", || click(center, ClickButton::Right, 1));
     sleep(Duration::from_millis(600));
-
-    // Dismiss context menu with Escape before scrolling
-    step("dismiss context menu (Escape key event)", || {
-        post_escape();
-    });
+    step("dismiss context menu (Escape key event)", post_escape);
     sleep(Duration::from_millis(400));
-
-    step("scroll down 5 lines (dy=-5)", || {
-        scroll(-5, 0);
-    });
+    step("scroll down 5 lines (dy=-5)", || scroll(-5, 0));
     sleep(Duration::from_millis(400));
-
-    step("scroll up 5 lines (dy=+5)", || {
-        scroll(5, 0);
-    });
+    step("scroll up 5 lines (dy=+5)", || scroll(5, 0));
     sleep(Duration::from_millis(400));
-
-    step("scroll right 3 (dx=-3)", || {
-        scroll(0, -3);
-    });
+    step("scroll right 3 (dx=-3)", || scroll(0, -3));
     sleep(Duration::from_millis(400));
-
-    step("scroll left 3 (dx=+3)", || {
-        scroll(0, 3);
-    });
+    step("scroll left 3 (dx=+3)", || scroll(0, 3));
     sleep(Duration::from_millis(400));
-
-    step("drag center → center+80px", || {
-        drag(center, offset);
-    });
+    step("drag center → center+80px", || drag(center, offset));
     sleep(Duration::from_millis(400));
 
     println!("\n=== smoke test complete ===");
@@ -275,11 +334,6 @@ fn step(label: &str, f: impl FnOnce()) {
 
 // Sends a bare Escape key down+up to dismiss menus.
 fn post_escape() {
-    use std::os::raw::c_void;
-
-    type CGEventRef = *mut c_void;
-    type CGEventSourceRef = *const c_void;
-
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGEventCreateKeyboardEvent(
@@ -287,19 +341,16 @@ fn post_escape() {
             keycode:  u16,
             key_down: bool,
         ) -> CGEventRef;
-        fn CGEventPost(tap: u32, event: CGEventRef);
-        fn CFRelease(cf: *const c_void);
     }
 
-    const K_CG_HID_EVENT_TAP: u32 = 0;
     const KEYCODE_ESCAPE: u16 = 0x35;
 
     unsafe {
-        let down = CGEventCreateKeyboardEvent(std::ptr::null(), KEYCODE_ESCAPE, true);
-        CGEventPost(K_CG_HID_EVENT_TAP, down);
+        let down = CGEventCreateKeyboardEvent(std::ptr::null_mut(), KEYCODE_ESCAPE, true);
+        CGEventPost(K_CG_SESSION_EVENT_TAP, down);
         CFRelease(down as *const c_void);
-        let up = CGEventCreateKeyboardEvent(std::ptr::null(), KEYCODE_ESCAPE, false);
-        CGEventPost(K_CG_HID_EVENT_TAP, up);
+        let up = CGEventCreateKeyboardEvent(std::ptr::null_mut(), KEYCODE_ESCAPE, false);
+        CGEventPost(K_CG_SESSION_EVENT_TAP, up);
         CFRelease(up as *const c_void);
     }
 }

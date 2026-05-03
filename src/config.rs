@@ -1,4 +1,26 @@
 use serde::Deserialize;
+use std::sync::OnceLock;
+
+static CONFIG: OnceLock<Config> = OnceLock::new();
+
+/// Returns the global config, loading from disk on first call.
+pub fn get() -> &'static Config {
+    CONFIG.get_or_init(Config::load_from_disk)
+}
+
+impl Config {
+    fn load_from_disk() -> Self {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let path = format!("{}/.config/keytogo/config.toml", home);
+        match std::fs::read_to_string(&path) {
+            Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
+                log::warn!("config parse error in {path}: {e}; using defaults");
+                Config::default()
+            }),
+            Err(_) => Config::default(),
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -8,6 +30,7 @@ pub struct Config {
     pub keybinds: KeybindsConfig,
     pub scroll: ScrollConfig,
     pub style: StyleConfig,
+    pub hud: HudConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,14 +54,12 @@ pub struct SubcellConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct KeybindsConfig {
-    /// Key to enter scroll mode from grid mode.
-    pub scroll_mode_key: char,
-    /// Key to enter drag mode from grid mode.
-    pub drag_mode_key: char,
     /// Modifier name that selects right-click ("shift" | "ctrl" | "alt").
     pub right_click_modifier: String,
     /// Modifier name that selects middle-click.
     pub middle_click_modifier: String,
+    /// Which layout to show on activation: "grid_a" (macrogrid) or "grid" (standard).
+    pub default_layout: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +79,20 @@ pub struct StyleConfig {
     pub subcell_dot: String,
 }
 
+/// HUD overlay position and margin configuration.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct HudConfig {
+    /// Where to anchor the scroll HUD pill.
+    /// Values: "bottom-center" | "bottom-left" | "bottom-right"
+    ///         | "top-center"  | "top-left"    | "top-right"
+    pub position: String,
+    /// Horizontal offset from the anchor edge (pixels).  Ignored for *-center.
+    pub margin_x: f64,
+    /// Vertical offset from the screen edge (pixels).
+    pub margin_y: f64,
+}
+
 // ── Defaults ───────────────────────────────────────────────────────────────
 
 impl Default for Config {
@@ -68,6 +103,17 @@ impl Default for Config {
             keybinds: KeybindsConfig::default(),
             scroll: ScrollConfig::default(),
             style: StyleConfig::default(),
+            hud: HudConfig::default(),
+        }
+    }
+}
+
+impl Default for HudConfig {
+    fn default() -> Self {
+        Self {
+            position: "bottom-center".into(),
+            margin_x: 0.0,
+            margin_y: 64.0,
         }
     }
 }
@@ -94,10 +140,9 @@ impl Default for SubcellConfig {
 impl Default for KeybindsConfig {
     fn default() -> Self {
         Self {
-            scroll_mode_key: 's',
-            drag_mode_key: 'd',
             right_click_modifier: "shift".into(),
             middle_click_modifier: "ctrl".into(),
+            default_layout: "grid_a".into(),
         }
     }
 }
