@@ -1,7 +1,6 @@
 /// Full-screen transparent overlay with multiple visual states:
-///   Grid    — standard 10×9 grid with optional first-char column highlight
-///   GridA   — Layout A 4×3 macro grid with optional macro-key highlight
-///   Subcell — semi-transparent background + selected cell + ortholinear 6×3 subcell grid
+///   GridA   — macro grid with optional macro-key highlight
+///   Subcell — semi-transparent background + selected cell + ortholinear subcell grid
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -12,10 +11,7 @@ use objc2_app_kit::{NSBackingStoreType, NSColor, NSScreen, NSView, NSWindow, NSW
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
 
 use crate::config::{self, HudConfig};
-use crate::keymap::{
-    LAYOUT_A_LOWER_KEYS, LAYOUT_A_MACRO_COLS, LAYOUT_A_MACRO_ROWS, LAYOUT_A_TOTAL_ROWS,
-    LAYOUT_A_UPPER_KEYS, SUBCELL_COLS, SUBCELL_KEYS, SUBCELL_ROWS,
-};
+use crate::keymap::layout_geom;
 
 // ── Overlay state ──────────────────────────────────────────────────────────
 
@@ -23,11 +19,9 @@ use crate::keymap::{
 pub enum OverlayState {
     #[default]
     Hidden,
-    /// Standard 10×9 grid; optionally dims all but the matching column.
-    Grid { first_char: Option<char> },
-    /// Layout A 4×3 macro grid; optionally highlights the selected macro key.
+    /// Macro grid; optionally highlights the selected macro key.
     GridA { macro_first: Option<char> },
-    /// Selected cell area (screen coords, y from top) + 18-key ortho subcell grid.
+    /// Selected cell area (screen coords, y from top) + ortho subcell grid.
     Subcell { x: f64, y: f64, w: f64, h: f64 },
     /// KeyCastr-style HUD shown during scroll mode: key name + action label.
     /// Empty key = "Scroll Mode" hint; non-empty = last key pressed and its effect.
@@ -71,7 +65,6 @@ declare_class!(
 
             match state {
                 OverlayState::Hidden => {}
-                OverlayState::Grid { first_char } => draw_standard_grid(self, first_char),
                 OverlayState::GridA { macro_first } => draw_grid_a(self, macro_first),
                 OverlayState::Subcell { x, y, w, h } => draw_subcell_layer(self, x, y, w, h),
                 OverlayState::ScrollHud { key, action } => draw_scroll_hud(self, &key, &action),
@@ -82,76 +75,29 @@ declare_class!(
 
 // ── Renderers ──────────────────────────────────────────────────────────────
 
-fn draw_standard_grid(view: &OverlayView, first_char: Option<char>) {
-    let bounds = view.bounds();
-    let sw = bounds.size.width;
-    let sh = bounds.size.height;
-    let grid = &config::get().grid;
-    let cw = sw / grid.cols as f64;
-    let ch = sh / grid.rows as f64;
-
-    draw_dim_bg(bounds);
-
-    let alpha: Vec<char> = grid.label_alphabet.chars().collect();
-
-    for row in 0..grid.rows {
-        for col in 0..grid.cols {
-            let x = col as f64 * cw;
-            let y = sh - (row + 1) as f64 * ch;
-            let cell_rect = NSRect {
-                origin: NSPoint { x, y },
-                size: NSSize {
-                    width: cw,
-                    height: ch,
-                },
-            };
-
-            let first_match =
-                first_char.and_then(|fc| alpha.iter().position(|&c| c == fc)) == Some(col);
-            // Subtle dark bg on every cell so labels are legible against any desktop bg.
-            fill_rect(cell_rect, 0.0, 0.0, 0.0, if first_match { 0.18 } else { 0.08 });
-            if first_match {
-                fill_rect(cell_rect, 1.0, 1.0, 1.0, 0.06);
-            }
-
-            stroke_rect(cell_rect, 1.0, 1.0, 1.0, 0.25);
-
-            if col < alpha.len() && row < alpha.len() {
-                let label = format!("{}{}", alpha[col], alpha[row]);
-                draw_label(&label, x + cw * 0.08, y + ch * 0.55, 11.0);
-            }
-        }
-    }
-}
-
 fn draw_grid_a(view: &OverlayView, macro_first: Option<char>) {
-    use crate::keymap::{LAYOUT_A_SUB_COLS, LAYOUT_A_SUB_KEYS, LAYOUT_A_SUB_ROWS};
-
     let bounds = view.bounds();
     let sw = bounds.size.width;
     let sh = bounds.size.height;
-    let macro_cw = sw / LAYOUT_A_MACRO_COLS as f64;
-    let macro_ch = sh / LAYOUT_A_TOTAL_ROWS as f64;
-    let sub_cw = macro_cw / LAYOUT_A_SUB_COLS as f64;
-    let sub_ch = macro_ch / LAYOUT_A_SUB_ROWS as f64;
+
+    let layouts = config::parsed_layouts();
+    let macro_l = &layouts.macro_l;
+    let sub_l   = &layouts.sub_l;
+
+    let g  = layout_geom(sw, sh, macro_l.num_cols, macro_l.num_rows, sub_l.num_cols, sub_l.num_rows);
+    let ss = g.sub_size;
 
     draw_dim_bg(bounds);
 
-    for row in 0..LAYOUT_A_TOTAL_ROWS {
-        for col in 0..LAYOUT_A_MACRO_COLS {
-            let macro_key = if row < LAYOUT_A_MACRO_ROWS {
-                LAYOUT_A_UPPER_KEYS[row][col]
-            } else {
-                LAYOUT_A_LOWER_KEYS[row - LAYOUT_A_MACRO_ROWS][col]
-            };
-            let mx = col as f64 * macro_cw;
-            let my = sh - (row + 1) as f64 * macro_ch;
+    for row in 0..macro_l.num_rows {
+        for col in 0..macro_l.num_cols {
+            let macro_key = macro_l.keys[row][col];
+            // Centered grid origin; NSView y increases upward.
+            let mx = g.offset_x + col as f64 * g.macro_w;
+            let my = sh - g.offset_y - (row + 1) as f64 * g.macro_h;
             let macro_rect = NSRect {
                 origin: NSPoint { x: mx, y: my },
-                size: NSSize {
-                    width: macro_cw,
-                    height: macro_ch,
-                },
+                size: NSSize { width: g.macro_w, height: g.macro_h },
             };
 
             let is_selected = macro_first == Some(macro_key);
@@ -160,26 +106,22 @@ fn draw_grid_a(view: &OverlayView, macro_first: Option<char>) {
             }
             stroke_rect(macro_rect, 1.0, 1.0, 1.0, 0.30);
 
-            // Full sub-grid: all sub-keys rendered as labeled cells
             let sub_alpha = if is_selected { 0.85 } else { 0.60 };
-            for sr in 0..LAYOUT_A_SUB_ROWS {
-                for sc in 0..LAYOUT_A_SUB_COLS {
-                    let sub_key = LAYOUT_A_SUB_KEYS[sr][sc];
-                    let sx = mx + sc as f64 * sub_cw;
+            for sr in 0..sub_l.num_rows {
+                for sc in 0..sub_l.num_cols {
+                    let sub_key = sub_l.keys[sr][sc];
+                    let sx = mx + sc as f64 * ss;
                     // sr=0 is visual top → highest NSView y
-                    let sy = my + (LAYOUT_A_SUB_ROWS - 1 - sr) as f64 * sub_ch;
+                    let sy = my + (sub_l.num_rows - 1 - sr) as f64 * ss;
                     let sub_rect = NSRect {
                         origin: NSPoint { x: sx, y: sy },
-                        size: NSSize {
-                            width: sub_cw,
-                            height: sub_ch,
-                        },
+                        size: NSSize { width: ss, height: ss },
                     };
                     stroke_rect(sub_rect, 1.0, 1.0, 1.0, sub_alpha * 0.5);
                     draw_label_alpha(
                         &format!("{}{}", macro_key, sub_key),
-                        sx + sub_cw * 0.20,
-                        sy + sub_ch * 0.28,
+                        sx + ss * 0.20,
+                        sy + ss * 0.28,
                         10.0,
                         sub_alpha,
                     );
@@ -199,37 +141,36 @@ fn draw_subcell_layer(view: &OverlayView, cell_x: f64, cell_y: f64, cell_w: f64,
     // cell_y is screen-y-from-top; convert to NSView y (from bottom).
     let nsview_y = sh - cell_y - cell_h;
     let cell_rect = NSRect {
-        origin: NSPoint {
-            x: cell_x,
-            y: nsview_y,
-        },
-        size: NSSize {
-            width: cell_w,
-            height: cell_h,
-        },
+        origin: NSPoint { x: cell_x, y: nsview_y },
+        size: NSSize { width: cell_w, height: cell_h },
     };
     fill_rect(cell_rect, 1.0, 1.0, 0.0, 0.40);
     stroke_rect(cell_rect, 1.0, 1.0, 0.0, 0.80);
 
-    // Draw ortholinear 6×3 subcell grid.
-    let scw = cell_w / SUBCELL_COLS as f64;
-    let sch = cell_h / SUBCELL_ROWS as f64;
+    let subcell_l = &config::parsed_layouts().subcell_l;
+    let sc_cols = subcell_l.num_cols;
+    let sc_rows = subcell_l.num_rows;
 
-    for &(key, sub_col, sub_row) in SUBCELL_KEYS {
-        let x = cell_x + sub_col as f64 * scw;
-        // sub_row=0 is visual top → highest NSView y
-        let y = nsview_y + (SUBCELL_ROWS - 1 - sub_row as usize) as f64 * sch;
-        let sub_rect = NSRect {
-            origin: NSPoint { x, y },
-            size: NSSize {
-                width: scw,
-                height: sch,
-            },
-        };
+    // Square sub-cells centered within the selected cell.
+    let sc_size     = (cell_w / sc_cols as f64).min(cell_h / sc_rows as f64);
+    let sc_offset_x = (cell_w - sc_size * sc_cols as f64) / 2.0;
+    let sc_offset_y = (cell_h - sc_size * sc_rows as f64) / 2.0;
 
-        fill_rect(sub_rect, 0.0, 1.0, 0.533, 0.12);
-        stroke_rect(sub_rect, 0.0, 1.0, 0.533, 0.70);
-        draw_label(&key.to_string(), x + scw * 0.3, y + sch * 0.35, 10.0);
+    for row in 0..sc_rows {
+        for col in 0..sc_cols {
+            let key = subcell_l.keys[row][col];
+            let x = cell_x + sc_offset_x + col as f64 * sc_size;
+            // row=0 is visual top → highest NSView y
+            let y = nsview_y + sc_offset_y + (sc_rows - 1 - row) as f64 * sc_size;
+            let sub_rect = NSRect {
+                origin: NSPoint { x, y },
+                size: NSSize { width: sc_size, height: sc_size },
+            };
+
+            fill_rect(sub_rect, 0.0, 1.0, 0.533, 0.12);
+            stroke_rect(sub_rect, 0.0, 1.0, 0.533, 0.70);
+            draw_label(&key.to_string(), x + sc_size * 0.3, y + sc_size * 0.35, 10.0);
+        }
     }
 }
 
@@ -449,19 +390,13 @@ pub fn init(mtm: MainThreadMarker) {
     );
 }
 
-/// Show the standard 10×9 grid. Pass `first_char` to highlight the matching column.
-pub fn show_grid(first_char: Option<char>) {
-    set_state(OverlayState::Grid { first_char });
-    redraw();
-}
-
-/// Show the Layout A 4×3 macro grid. Pass `macro_first` to highlight the selected key.
+/// Show the macro grid. Pass `macro_first` to highlight the selected key.
 pub fn show_grid_a(macro_first: Option<char>) {
     set_state(OverlayState::GridA { macro_first });
     redraw();
 }
 
-/// Show the subcell layer: dim bg + selected cell highlight + 6×3 ortho subcell grid.
+/// Show the subcell layer: dim bg + selected cell highlight + ortho subcell grid.
 /// `x`, `y`, `w`, `h` are the selected cell bounds in screen coords (y from top).
 pub fn show_subcell(x: f64, y: f64, w: f64, h: f64) {
     set_state(OverlayState::Subcell { x, y, w, h });

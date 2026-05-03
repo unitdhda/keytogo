@@ -18,11 +18,13 @@ fn main() {
     )
     .init();
 
-    // Service management doesn't require Accessibility — handle before the check.
+    // Service management and config init don't require Accessibility — handle before the check.
     let args: Vec<String> = std::env::args().collect();
+    let has_force = args.iter().any(|a| a == "--force");
     match args.get(1).map(String::as_str) {
-        Some("--install-service")   => { menu::cli_install_service();   return; }
-        Some("--uninstall-service") => { menu::cli_uninstall_service(); return; }
+        Some("--install-service")   => { menu::cli_install_service();        return; }
+        Some("--uninstall-service") => { menu::cli_uninstall_service();       return; }
+        Some("--init-config")       => { menu::cli_init_config(has_force);    return; }
         _ => {}
     }
 

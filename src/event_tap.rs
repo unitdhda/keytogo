@@ -4,17 +4,11 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::cell::Cell;
 
 use crate::{
-    config::{self, GridConfig},
-    keymap::{
-        keycode_to_char,
-        LAYOUT_A_LOWER_KEYS, LAYOUT_A_MACRO_COLS, LAYOUT_A_MACRO_ROWS,
-        LAYOUT_A_SUB_COLS, LAYOUT_A_SUB_KEYS, LAYOUT_A_SUB_ROWS, LAYOUT_A_TOTAL_ROWS,
-        LAYOUT_A_UPPER_KEYS,
-        SUBCELL_COLS, SUBCELL_KEYS, SUBCELL_ROWS,
-    },
+    config,
+    keymap::{keycode_to_char, layout_geom},
     mouse::{self, CGPoint},
     overlay,
-    state::{AppMode, AppState, CellBounds, ClickButton, LayoutTag, PendingTap},
+    state::{AppMode, AppState, CellBounds, ClickButton, PendingTap},
 };
 
 // ── Statics ────────────────────────────────────────────────────────────────
@@ -182,13 +176,10 @@ unsafe extern "C" fn tap_callback(
     let mode  = state.mode.clone();
 
     match mode {
-        AppMode::Idle => on_idle(state, kc, flags, event),
-        AppMode::Grid { first } => on_grid(state, kc, flags, first),
-        AppMode::GridA { macro_first } => on_grid_a(state, kc, flags, macro_first),
-        AppMode::Subcell { bounds, button, layout } => {
-            on_subcell(state, kc, flags, bounds, button, layout)
-        }
-        AppMode::Scroll => on_scroll(state, kc, flags),
+        AppMode::Idle                    => on_idle(state, kc, flags, event),
+        AppMode::GridA { macro_first }   => on_grid_a(state, kc, flags, macro_first),
+        AppMode::Subcell { bounds, button } => on_subcell(state, kc, flags, bounds, button),
+        AppMode::Scroll                  => on_scroll(state, kc, flags),
     }
 }
 
@@ -274,88 +265,12 @@ fn on_idle(state: &mut AppState, kc: u16, flags: u64, event: CGEventRef) -> CGEv
     if kc == KEYCODE_SPACE && (flags & ACTIVATION_MODS) == ACTIVATION_MODS {
         let origin = mouse::cursor_pos();
         state.drag_origin = Some((origin.x, origin.y));
-        let binds = &config::get().keybinds;
-        if binds.default_layout == "grid" {
-            state.mode = AppMode::Grid { first: None };
-            overlay::show_grid(None);
-            log::info!("→ GridMode");
-        } else {
-            state.mode = AppMode::GridA { macro_first: None };
-            overlay::show_grid_a(None);
-            log::info!("→ GridA (macrogrid default)");
-        }
+        state.mode = AppMode::GridA { macro_first: None };
+        overlay::show_grid_a(None);
+        log::info!("→ GridA");
         return std::ptr::null_mut();
     }
     event
-}
-
-fn on_grid(state: &mut AppState, kc: u16, flags: u64, first: Option<char>) -> CGEventRef {
-    let grid = &config::get().grid;
-
-    if kc == KEYCODE_ESCAPE {
-        state.mode = AppMode::Idle;
-        overlay::hide();
-        log::info!("→ Idle");
-        return std::ptr::null_mut();
-    }
-
-    if kc == KEYCODE_TAB && first.is_none() {
-        state.scroll_origin = Some(LayoutTag::Standard);
-        state.mode = AppMode::Scroll;
-        overlay::show_scroll_mode();
-        schedule_hud_fade(2.0);
-        log::info!("→ ScrollMode (from Grid)");
-        return std::ptr::null_mut();
-    }
-
-    let Some(ch) = keycode_to_char(kc) else {
-        return std::ptr::null_mut();
-    };
-
-    match first {
-        None => {
-            if grid.label_alphabet.contains(ch) {
-                state.mode = AppMode::Grid { first: Some(ch) };
-                overlay::show_grid(Some(ch));
-                log::debug!("grid first='{ch}'");
-            }
-        }
-        Some(f) => {
-            if grid.label_alphabet.contains(ch) {
-                match label_to_cell(f, ch, &grid) {
-                    Some((col, row)) => {
-                        let bounds = cell_bounds(col, row, &grid);
-                        mouse::move_cursor(bounds.center_x(), bounds.center_y());
-                        // Option alone = move cursor only; Option+Shift = proceed to subcell for drag
-                        if flags & FLAGS_OPTION != 0 && flags & FLAGS_SHIFT == 0 {
-                            log::info!("move-only ({col},{row}) → Idle");
-                            state.mode = AppMode::Idle;
-                            overlay::hide();
-                            return std::ptr::null_mut();
-                        }
-                        let button = modifier_button(flags);
-                        log::info!(
-                            "→ SubcellMode  cell=({col},{row})  cursor=({:.0},{:.0})",
-                            bounds.center_x(), bounds.center_y()
-                        );
-                        state.mode = AppMode::Subcell {
-                            bounds,
-                            button,
-                            layout: LayoutTag::Standard,
-                        };
-                        overlay::show_subcell(bounds.x, bounds.y, bounds.w, bounds.h);
-                    }
-                    None => {
-                        log::debug!("'{f}{ch}' out of grid bounds — reset");
-                        state.mode = AppMode::Grid { first: None };
-                        overlay::show_grid(None);
-                    }
-                }
-            }
-        }
-    }
-
-    std::ptr::null_mut()
 }
 
 fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char>) -> CGEventRef {
@@ -367,7 +282,6 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
     }
 
     if kc == KEYCODE_TAB && macro_first.is_none() {
-        state.scroll_origin = Some(LayoutTag::LayoutA);
         state.mode = AppMode::Scroll;
         overlay::show_scroll_mode();
         schedule_hud_fade(2.0);
@@ -379,49 +293,48 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
         return std::ptr::null_mut();
     };
 
+    let layouts = config::parsed_layouts();
+
     match macro_first {
         None => {
-            if layout_a_macro_pos(ch).is_some() {
+            if layouts.macro_l.key_pos(ch).is_some() {
                 state.mode = AppMode::GridA { macro_first: Some(ch) };
                 overlay::show_grid_a(Some(ch));
                 log::debug!("grid_a macro='{ch}'");
             }
         }
         Some(mc) => {
-            let macro_pos = layout_a_macro_pos(mc);
-            let sub_pos   = layout_a_sub_pos(ch);
+            let macro_pos = layouts.macro_l.key_pos(mc);
+            let sub_pos   = layouts.sub_l.key_pos(ch);
 
             match (macro_pos, sub_pos) {
                 (Some((macro_col, macro_row)), Some((sub_col, sub_row))) => {
                     let (sw, sh) = mouse::screen_size();
-                    let macro_w = sw / LAYOUT_A_MACRO_COLS as f64;
-                    let macro_h = sh / LAYOUT_A_TOTAL_ROWS as f64;
-                    let cell_w = macro_w / LAYOUT_A_SUB_COLS as f64;
-                    let cell_h = macro_h / LAYOUT_A_SUB_ROWS as f64;
-                    let cell_x = macro_col as f64 * macro_w + sub_col as f64 * cell_w;
-                    let cell_y = macro_row as f64 * macro_h + sub_row as f64 * cell_h;
+                    let g = layout_geom(
+                        sw, sh,
+                        layouts.macro_l.num_cols, layouts.macro_l.num_rows,
+                        layouts.sub_l.num_cols,   layouts.sub_l.num_rows,
+                    );
+                    let cell_x = g.offset_x + macro_col as f64 * g.macro_w + sub_col as f64 * g.sub_size;
+                    let cell_y = g.offset_y + macro_row as f64 * g.macro_h + sub_row as f64 * g.sub_size;
 
-                    let bounds = CellBounds::new(cell_x, cell_y, cell_w, cell_h);
+                    let bounds = CellBounds::new(cell_x, cell_y, g.sub_size, g.sub_size);
                     mouse::move_cursor(bounds.center_x(), bounds.center_y());
                     // Option alone = move cursor only; Option+Shift = proceed to subcell for drag
                     if flags & FLAGS_OPTION != 0 && flags & FLAGS_SHIFT == 0 {
-                        log::info!("move-only A macro='{mc}' sub='{ch}' → Idle");
+                        log::info!("move-only macro='{mc}' sub='{ch}' → Idle");
                         state.mode = AppMode::Idle;
                         overlay::hide();
                         return std::ptr::null_mut();
                     }
                     let button = modifier_button(flags);
                     log::info!(
-                        "→ SubcellMode(A)  macro='{mc}' sub='{ch}'  \
-                         cell=({:.0},{:.0} {}×{}) cursor=({:.0},{:.0})",
-                        cell_x, cell_y, cell_w, cell_h,
+                        "→ SubcellMode  macro='{mc}' sub='{ch}'  \
+                         cell=({:.0},{:.0} {:.0}×{:.0}) cursor=({:.0},{:.0})",
+                        cell_x, cell_y, bounds.w, bounds.h,
                         bounds.center_x(), bounds.center_y()
                     );
-                    state.mode = AppMode::Subcell {
-                        bounds,
-                        button,
-                        layout: LayoutTag::LayoutA,
-                    };
+                    state.mode = AppMode::Subcell { bounds, button };
                     overlay::show_subcell(bounds.x, bounds.y, bounds.w, bounds.h);
                 }
                 _ => {
@@ -442,28 +355,14 @@ fn on_subcell(
     flags:  u64,
     bounds: CellBounds,
     button: ClickButton,
-    layout: LayoutTag,
 ) -> CGEventRef {
     if kc == KEYCODE_ESCAPE {
         fire_pending_tap_now(state);
-        match layout {
-            LayoutTag::Standard => {
-                if matches!(state.mode, AppMode::Idle) {
-                    // fire_pending_tap_now already transitioned to Idle
-                } else {
-                    state.mode = AppMode::Grid { first: None };
-                    overlay::show_grid(None);
-                }
-            }
-            LayoutTag::LayoutA => {
-                if matches!(state.mode, AppMode::Idle) {
-                } else {
-                    state.mode = AppMode::GridA { macro_first: None };
-                    overlay::show_grid_a(None);
-                }
-            }
+        if !matches!(state.mode, AppMode::Idle) {
+            state.mode = AppMode::GridA { macro_first: None };
+            overlay::show_grid_a(None);
         }
-        log::info!("→ parent grid");
+        log::info!("→ GridA");
         return std::ptr::null_mut();
     }
 
@@ -541,21 +440,10 @@ fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
             log::info!("scroll hold force-released on exit");
         }
         if kc == KEYCODE_TAB {
-            // Return to whichever grid launched scroll mode.
-            match state.scroll_origin.take() {
-                Some(LayoutTag::Standard) => {
-                    state.mode = AppMode::Grid { first: None };
-                    overlay::show_grid(None);
-                    log::info!("→ Grid (scroll Tab-back)");
-                }
-                _ => {
-                    state.mode = AppMode::GridA { macro_first: None };
-                    overlay::show_grid_a(None);
-                    log::info!("→ GridA (scroll Tab-back)");
-                }
-            }
+            state.mode = AppMode::GridA { macro_first: None };
+            overlay::show_grid_a(None);
+            log::info!("→ GridA (scroll Tab-back)");
         } else {
-            state.scroll_origin = None;
             state.mode = AppMode::Idle;
             overlay::hide();
             log::info!("→ Idle");
@@ -600,62 +488,22 @@ fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
     std::ptr::null_mut()
 }
 
-// ── Grid geometry ──────────────────────────────────────────────────────────
+// ── Subcell geometry ───────────────────────────────────────────────────────
 
-fn label_to_cell(first: char, second: char, cfg: &GridConfig) -> Option<(usize, usize)> {
-    let alpha: Vec<char> = cfg.label_alphabet.chars().collect();
-    let col = alpha.iter().position(|&c| c == first)?;
-    let row = alpha.iter().position(|&c| c == second)?;
-    if col < cfg.cols && row < cfg.rows { Some((col, row)) } else { None }
-}
-
-fn cell_bounds(col: usize, row: usize, cfg: &GridConfig) -> CellBounds {
-    let (sw, sh) = mouse::screen_size();
-    let cw = sw / cfg.cols as f64;
-    let ch = sh / cfg.rows as f64;
-    CellBounds::new(col as f64 * cw, row as f64 * ch, cw, ch)
-}
-
-/// Pixel position of a subcell key within the given cell bounds (ortholinear).
+/// Pixel position of a subcell key within the given cell bounds.
+/// Sub-cells are square and centered within the cell.
 fn subcell_pos(key: char, bounds: &CellBounds) -> Option<CGPoint> {
-    let &(_, sub_col, sub_row) = SUBCELL_KEYS.iter().find(|&&(k, _, _)| k == key)?;
-    let scw = bounds.w / SUBCELL_COLS as f64;
-    let sch = bounds.h / SUBCELL_ROWS as f64;
+    let subcell_l = &config::parsed_layouts().subcell_l;
+    let (sub_col, sub_row) = subcell_l.key_pos(key)?;
+    let sc_cols = subcell_l.num_cols;
+    let sc_rows = subcell_l.num_rows;
+    let sc_size     = (bounds.w / sc_cols as f64).min(bounds.h / sc_rows as f64);
+    let sc_offset_x = (bounds.w - sc_size * sc_cols as f64) / 2.0;
+    let sc_offset_y = (bounds.h - sc_size * sc_rows as f64) / 2.0;
     Some(CGPoint::new(
-        bounds.x + sub_col as f64 * scw + scw * 0.5,
-        bounds.y + sub_row as f64 * sch + sch * 0.5,
+        bounds.x + sc_offset_x + sub_col as f64 * sc_size + sc_size * 0.5,
+        bounds.y + sc_offset_y + sub_row as f64 * sc_size + sc_size * 0.5,
     ))
-}
-
-// ── Layout A helpers ───────────────────────────────────────────────────────
-
-fn layout_a_macro_pos(ch: char) -> Option<(usize, usize)> {
-    for row in 0..LAYOUT_A_MACRO_ROWS {
-        for col in 0..LAYOUT_A_MACRO_COLS {
-            if LAYOUT_A_UPPER_KEYS[row][col] == ch {
-                return Some((col, row));
-            }
-        }
-    }
-    for row in 0..LAYOUT_A_MACRO_ROWS {
-        for col in 0..LAYOUT_A_MACRO_COLS {
-            if LAYOUT_A_LOWER_KEYS[row][col] == ch {
-                return Some((col, row + LAYOUT_A_MACRO_ROWS));
-            }
-        }
-    }
-    None
-}
-
-fn layout_a_sub_pos(ch: char) -> Option<(usize, usize)> {
-    for row in 0..LAYOUT_A_SUB_ROWS {
-        for col in 0..LAYOUT_A_SUB_COLS {
-            if LAYOUT_A_SUB_KEYS[row][col] == ch {
-                return Some((col, row));
-            }
-        }
-    }
-    None
 }
 
 // ── Modifier helpers ───────────────────────────────────────────────────────
@@ -723,7 +571,7 @@ fn setup_tap(block: bool) {
         let rl = CFRunLoopGetCurrent();
         CFRunLoopAddSource(rl, source, kCFRunLoopCommonModes);
         CGEventTapEnable(tap_port, true);
-        log::info!("event tap active  (Ctrl+Alt+Space → Grid,  Tab → Layout A)");
+        log::info!("event tap active  (Cmd+RCmd+Space → GridA,  Tab → Scroll)");
         if block {
             CFRunLoopRun();
             CFRelease(source as *const c_void);
@@ -757,75 +605,40 @@ pub fn resume() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::GridConfig;
+    use crate::keymap::parse_layout_string;
 
-    fn default_grid() -> GridConfig { GridConfig::default() }
+    // subcell_pos (via parsed layout) ─────────────────────────────────────────
 
-    // label_to_cell ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn label_first_cell() {
-        let g = default_grid();
-        assert_eq!(label_to_cell('q', 'q', &g), Some((0, 0)));
+    fn make_subcell_layout() -> crate::keymap::ParsedLayout {
+        // matches default subcell_keys: 6 cols × 3 rows
+        parse_layout_string("ertyui\ndfghjk\nxcvbnm").unwrap()
     }
 
-    #[test]
-    fn label_last_valid_cell() {
-        let g = default_grid();
-        assert_eq!(label_to_cell('p', 'o', &g), Some((9, 8)));
+    fn subcell_pos_with_layout(
+        key: char,
+        bounds: &CellBounds,
+        layout: &crate::keymap::ParsedLayout,
+    ) -> Option<CGPoint> {
+        let (sub_col, sub_row) = layout.key_pos(key)?;
+        let sc_cols = layout.num_cols;
+        let sc_rows = layout.num_rows;
+        let sc_size     = (bounds.w / sc_cols as f64).min(bounds.h / sc_rows as f64);
+        let sc_offset_x = (bounds.w - sc_size * sc_cols as f64) / 2.0;
+        let sc_offset_y = (bounds.h - sc_size * sc_rows as f64) / 2.0;
+        Some(CGPoint::new(
+            bounds.x + sc_offset_x + sub_col as f64 * sc_size + sc_size * 0.5,
+            bounds.y + sc_offset_y + sub_row as f64 * sc_size + sc_size * 0.5,
+        ))
     }
-
-    #[test]
-    fn label_col_out_of_bounds() {
-        let g = default_grid();
-        assert_eq!(label_to_cell('a', 'q', &g), None);
-    }
-
-    #[test]
-    fn label_row_out_of_bounds() {
-        let g = default_grid();
-        assert_eq!(label_to_cell('q', 'p', &g), None);
-    }
-
-    #[test]
-    fn label_char_not_in_alphabet() {
-        let g = default_grid();
-        assert_eq!(label_to_cell('1', 'q', &g), None);
-    }
-
-    // cell_bounds ─────────────────────────────────────────────────────────────
-
-    fn cell_bounds_for_screen(col: usize, row: usize, cfg: &GridConfig, sw: f64, sh: f64) -> CellBounds {
-        let cw = sw / cfg.cols as f64;
-        let ch = sh / cfg.rows as f64;
-        CellBounds::new(col as f64 * cw, row as f64 * ch, cw, ch)
-    }
-
-    #[test]
-    fn cell_bounds_top_left() {
-        let g = default_grid(); // 10 cols × 9 rows
-        let b = cell_bounds_for_screen(0, 0, &g, 1920.0, 1080.0);
-        assert!((b.center_x() - 96.0).abs() < 1e-9);
-        assert!((b.center_y() - 60.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn cell_bounds_last_cell() {
-        let g = default_grid(); // 10 cols × 9 rows
-        let b = cell_bounds_for_screen(9, 8, &g, 1920.0, 1080.0);
-        assert!((b.center_x() - 1824.0).abs() < 1e-9);
-        assert!((b.center_y() - 1020.0).abs() < 1e-9);
-    }
-
-    // subcell_pos ─────────────────────────────────────────────────────────────
 
     #[test]
     fn subcell_pos_top_left_key() {
-        // 'e' is col 0, row 0 — should land at top-left quadrant center of cell
+        // 'e' is col 0, row 0 — square cells (600/6 = 100), no offset
+        let layout = make_subcell_layout();
         let bounds = CellBounds::new(0.0, 0.0, 600.0, 300.0);
-        let pos = subcell_pos('e', &bounds).unwrap();
-        let scw = 600.0 / SUBCELL_COLS as f64;
-        let sch = 300.0 / SUBCELL_ROWS as f64;
+        let pos = subcell_pos_with_layout('e', &bounds, &layout).unwrap();
+        let scw = 600.0 / layout.num_cols as f64;
+        let sch = 300.0 / layout.num_rows as f64;
         assert!((pos.x - scw * 0.5).abs() < 1e-9);
         assert!((pos.y - sch * 0.5).abs() < 1e-9);
     }
@@ -833,42 +646,20 @@ mod tests {
     #[test]
     fn subcell_pos_bottom_right_key() {
         // 'm' is col 5, row 2 — should land at bottom-right subcell center
+        let layout = make_subcell_layout();
         let bounds = CellBounds::new(0.0, 0.0, 600.0, 300.0);
-        let pos = subcell_pos('m', &bounds).unwrap();
-        let scw = 600.0 / SUBCELL_COLS as f64;
-        let sch = 300.0 / SUBCELL_ROWS as f64;
+        let pos = subcell_pos_with_layout('m', &bounds, &layout).unwrap();
+        let scw = 600.0 / layout.num_cols as f64;
+        let sch = 300.0 / layout.num_rows as f64;
         assert!((pos.x - (5.0 * scw + scw * 0.5)).abs() < 1e-9);
         assert!((pos.y - (2.0 * sch + sch * 0.5)).abs() < 1e-9);
     }
 
     #[test]
     fn subcell_pos_unknown_key_returns_none() {
+        let layout = make_subcell_layout();
         let bounds = CellBounds::new(0.0, 0.0, 600.0, 300.0);
-        assert!(subcell_pos('z', &bounds).is_none()); // 'z' not in SUBCELL_KEYS
-    }
-
-    // layout_a helpers ────────────────────────────────────────────────────────
-
-    #[test]
-    fn layout_a_macro_pos_corners() {
-        assert_eq!(layout_a_macro_pos('q'), Some((0, 0))); // top-left
-        assert_eq!(layout_a_macro_pos('r'), Some((3, 0))); // top-right
-        assert_eq!(layout_a_macro_pos('z'), Some((0, 2))); // bottom-left
-        assert_eq!(layout_a_macro_pos('v'), Some((3, 2))); // bottom-right
-    }
-
-    #[test]
-    fn layout_a_sub_pos_corners() {
-        assert_eq!(layout_a_sub_pos('e'), Some((0, 0)));
-        assert_eq!(layout_a_sub_pos('o'), Some((6, 0)));
-        assert_eq!(layout_a_sub_pos('c'), Some((0, 2)));
-        assert_eq!(layout_a_sub_pos('.'), Some((6, 2)));
-    }
-
-    #[test]
-    fn layout_a_macro_pos_unknown_returns_none() {
-        assert_eq!(layout_a_macro_pos('1'), None);
-        assert_eq!(layout_a_macro_pos('p'), None); // 'p' not in macro grid
+        assert!(subcell_pos_with_layout('z', &bounds, &layout).is_none()); // 'z' not in layout
     }
 
     // event_mask ──────────────────────────────────────────────────────────────
@@ -968,7 +759,6 @@ mod tests {
 
     #[test]
     fn modifier_flag_constants_are_pairwise_disjoint() {
-        // Each modifier occupies a unique bit; no two flags can be confused for each other.
         let named = [
             ("SHIFT",   FLAGS_SHIFT),
             ("CONTROL", FLAGS_CONTROL),
@@ -988,22 +778,17 @@ mod tests {
 
     #[test]
     fn activation_requires_both_cmd_flags() {
-        // Only the exact Cmd+RCmd combination satisfies (flags & ACTIVATION_MODS) == ACTIVATION_MODS.
         assert_eq!((FLAGS_CMD | FLAGS_RCMD) & ACTIVATION_MODS, ACTIVATION_MODS);
-        assert_ne!(FLAGS_CMD   & ACTIVATION_MODS, ACTIVATION_MODS); // left-Cmd alone
-        assert_ne!(FLAGS_RCMD  & ACTIVATION_MODS, ACTIVATION_MODS); // right-Cmd alone
-        assert_ne!(0u64        & ACTIVATION_MODS, ACTIVATION_MODS); // no modifier
-        assert_ne!(FLAGS_SHIFT & ACTIVATION_MODS, ACTIVATION_MODS); // wrong modifier
+        assert_ne!(FLAGS_CMD   & ACTIVATION_MODS, ACTIVATION_MODS);
+        assert_ne!(FLAGS_RCMD  & ACTIVATION_MODS, ACTIVATION_MODS);
+        assert_ne!(0u64        & ACTIVATION_MODS, ACTIVATION_MODS);
+        assert_ne!(FLAGS_SHIFT & ACTIVATION_MODS, ACTIVATION_MODS);
     }
 
     // ── Keybind conflict: subcell modifier branching ──────────────────────────
 
     #[test]
     fn subcell_modifier_branches_are_mutually_exclusive_and_exhaustive() {
-        // For any flags value, exactly one of {drag, move-only, click} must fire.
-        //   drag:      option && shift
-        //   move-only: option && !shift
-        //   click:     !option
         let samples = [
             0u64,
             FLAGS_SHIFT,
@@ -1030,35 +815,22 @@ mod tests {
 
     #[test]
     fn option_with_shift_not_same_as_option_alone() {
-        // Drag (Option+Shift) and move-only (Option only) must be distinguishable.
         let drag_flags = FLAGS_OPTION | FLAGS_SHIFT;
         let move_flags = FLAGS_OPTION;
-        assert_ne!(
-            drag_flags & FLAGS_SHIFT, 0,
-            "drag requires Shift bit set"
-        );
-        assert_eq!(
-            move_flags & FLAGS_SHIFT, 0,
-            "move-only must not have Shift bit"
-        );
+        assert_ne!(drag_flags & FLAGS_SHIFT, 0, "drag requires Shift bit set");
+        assert_eq!(move_flags & FLAGS_SHIFT, 0, "move-only must not have Shift bit");
     }
 
     // ── Keybind conflict: grid mode Tab → scroll ─────────────────────────────
 
     #[test]
     fn tab_keycode_has_no_char_mapping() {
-        // Tab (KEYCODE_TAB = 0x30) is not in keycode_to_char, so it can never be treated
-        // as a label char in Grid/GridA — no conflict with the alphabet namespace.
         assert_eq!(keycode_to_char(KEYCODE_TAB), None);
     }
 
     #[test]
     fn scroll_direction_keys_not_reachable_via_tab() {
-        // Scroll direction keys are regular chars; Tab is a special keycode — they can't
-        // collide because Tab enters scroll mode and direction keys only work once inside.
         let directions = ['j', 'k', 'h', 'l', 'd', 'u'];
-        // All direction keys have a char mapping (they're reachable via keycode_to_char),
-        // while Tab does not — confirming there is no single key that is both entry and action.
         for &k in &directions {
             let has_mapping = (0x00u16..=0xFF).any(|kc| keycode_to_char(kc) == Some(k));
             assert!(has_mapping, "direction key '{k}' has no keycode mapping");
@@ -1067,7 +839,6 @@ mod tests {
 
     #[test]
     fn scroll_direction_keys_no_duplicates() {
-        // Each direction key maps to exactly one scroll action.
         let directions = ['j', 'k', 'h', 'l', 'd', 'u'];
         let mut seen = std::collections::HashSet::new();
         for &k in &directions {
@@ -1079,13 +850,11 @@ mod tests {
 
     #[test]
     fn modifier_button_shift_wins_over_ctrl() {
-        // Shift → Right, Ctrl → Middle, Shift+Ctrl → Right (Shift wins).
-        // No flags combo produces an ambiguous or undefined result.
         let combos: &[(u64, ClickButton)] = &[
             (FLAGS_SHIFT,                 ClickButton::Right),
             (FLAGS_CONTROL,               ClickButton::Middle),
-            (FLAGS_SHIFT | FLAGS_CONTROL, ClickButton::Right),  // Shift wins
-            (FLAGS_OPTION,                ClickButton::Left),   // no button modifier
+            (FLAGS_SHIFT | FLAGS_CONTROL, ClickButton::Right),
+            (FLAGS_OPTION,                ClickButton::Left),
             (0,                           ClickButton::Left),
         ];
         for &(flags, expected) in combos {
@@ -1099,17 +868,12 @@ mod tests {
 
     #[test]
     fn modifier_button_right_and_middle_never_both_true() {
-        // Shift → Right, Ctrl → Middle; they cannot both be the result for the same flags.
         let samples = [
             0u64, FLAGS_SHIFT, FLAGS_CONTROL, FLAGS_SHIFT | FLAGS_CONTROL, FLAGS_OPTION,
         ];
         for &f in &samples {
-            let btn = modifier_button_with_default(f, ClickButton::Left);
-            // The result is one of {Left, Right, Middle}; never two at once (enum is single-valued).
-            // This test catches if the function signature ever changes to return multiple values.
-            let _ = btn; // just ensure it compiles to a single value — the assert is structural
+            let _ = modifier_button_with_default(f, ClickButton::Left);
         }
-        // Verify the two modifiers produce different buttons so they can never alias.
         assert_ne!(
             modifier_button_with_default(FLAGS_SHIFT,   ClickButton::Left),
             modifier_button_with_default(FLAGS_CONTROL, ClickButton::Left),

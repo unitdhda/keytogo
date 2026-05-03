@@ -1,3 +1,112 @@
+// ── Parsed layout ──────────────────────────────────────────────────────────
+
+/// A key grid parsed from a user-supplied multiline config string.
+/// `keys[row][col]` — row 0 is the top visual row.
+#[derive(Debug, Clone)]
+pub struct ParsedLayout {
+    pub keys:     Vec<Vec<char>>,
+    pub num_cols: usize,
+    pub num_rows: usize,
+}
+
+impl ParsedLayout {
+    /// Return `(col, row)` of `ch` in this layout, or `None`.
+    pub fn key_pos(&self, ch: char) -> Option<(usize, usize)> {
+        self.keys.iter().enumerate().find_map(|(row, cols)| {
+            cols.iter().position(|&k| k == ch).map(|col| (col, row))
+        })
+    }
+}
+
+/// Parse a multiline layout string into a `ParsedLayout`.
+///
+/// Rules:
+/// - Whitespace (spaces, tabs) within a line is skipped — use it for visual alignment.
+/// - Empty lines (after stripping whitespace) are skipped.
+/// - All non-empty rows must have the same number of non-whitespace characters.
+/// - Duplicate keys within the same layout are rejected.
+pub fn parse_layout_string(s: &str) -> Result<ParsedLayout, String> {
+    let rows: Vec<Vec<char>> = s
+        .lines()
+        .map(|line| line.chars().filter(|c| !c.is_whitespace()).collect::<Vec<char>>())
+        .filter(|row| !row.is_empty())
+        .collect();
+
+    if rows.is_empty() {
+        return Err("layout string is empty".into());
+    }
+
+    let num_cols = rows[0].len();
+    for (i, row) in rows.iter().enumerate() {
+        if row.len() != num_cols {
+            return Err(format!(
+                "row {i} has {} chars but row 0 has {num_cols}",
+                row.len()
+            ));
+        }
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for row in &rows {
+        for &k in row {
+            if !seen.insert(k) {
+                return Err(format!("duplicate key '{k}'"));
+            }
+        }
+    }
+
+    Ok(ParsedLayout { num_rows: rows.len(), num_cols, keys: rows })
+}
+
+// ── Grid geometry ──────────────────────────────────────────────────────────
+
+/// Screen geometry for the two-stage macro/sub layout.
+/// Sub-cells are square; macro cells and full grid are derived from them.
+pub struct LayoutGeom {
+    /// Square sub-cell side length (px).
+    pub sub_size: f64,
+    /// Macro cell width  = sub_cols × sub_size.
+    pub macro_w:  f64,
+    /// Macro cell height = sub_rows × sub_size.
+    pub macro_h:  f64,
+    /// Total grid width  = macro_cols × macro_w.
+    pub grid_w:   f64,
+    /// Total grid height = macro_rows × macro_h.
+    pub grid_h:   f64,
+    /// Left margin that centers the grid on screen.
+    pub offset_x: f64,
+    /// Top margin that centers the grid (screen-y-from-top).
+    pub offset_y: f64,
+}
+
+/// Compute layout geometry from screen and parsed layout dimensions.
+/// `sub_size` is the largest square that fits the full
+/// `(macro_cols × sub_cols) × (macro_rows × sub_rows)` grid on screen.
+pub fn layout_geom(
+    sw: f64, sh: f64,
+    macro_cols: usize, macro_rows: usize,
+    sub_cols:   usize, sub_rows:   usize,
+) -> LayoutGeom {
+    let total_cols = (macro_cols * sub_cols) as f64;
+    let total_rows = (macro_rows * sub_rows) as f64;
+    let sub_size   = (sw / total_cols).min(sh / total_rows);
+    let macro_w    = sub_size * sub_cols as f64;
+    let macro_h    = sub_size * sub_rows as f64;
+    let grid_w     = macro_w * macro_cols as f64;
+    let grid_h     = macro_h * macro_rows as f64;
+    LayoutGeom {
+        sub_size,
+        macro_w,
+        macro_h,
+        grid_w,
+        grid_h,
+        offset_x: (sw - grid_w) / 2.0,
+        offset_y: (sh - grid_h) / 2.0,
+    }
+}
+
+// ── Keycode table ──────────────────────────────────────────────────────────
+
 /// macOS virtual keycode → printable char (ANSI QWERTY layout).
 pub fn keycode_to_char(kc: u16) -> Option<char> {
     Some(match kc {
@@ -37,67 +146,126 @@ pub fn keycode_name(kc: u16) -> &'static str {
     }
 }
 
-// ── Subcell layout (ortholinear 6×3) ──────────────────────────────────────
-
-/// Subcell keys with (key, col, row) — ortholinear grid, no stagger.
-/// col 0..5 left→right, row 0..2 top→bottom.
-///
-///   ┌─e─┬─r─┬─t─┬─y─┬─u─┬─i─┐   row 0
-///   ├─d─┼─f─┼─g─┼─h─┼─j─┼─k─┤   row 1
-///   └─x─┴─c─┴─v─┴─b─┴─n─┴─m─┘   row 2
-pub const SUBCELL_KEYS: &[(char, u8, u8)] = &[
-    ('e', 0, 0), ('r', 1, 0), ('t', 2, 0), ('y', 3, 0), ('u', 4, 0), ('i', 5, 0),
-    ('d', 0, 1), ('f', 1, 1), ('g', 2, 1), ('h', 3, 1), ('j', 4, 1), ('k', 5, 1),
-    ('x', 0, 2), ('c', 1, 2), ('v', 2, 2), ('b', 3, 2), ('n', 4, 2), ('m', 5, 2),
-];
-
-pub const SUBCELL_COLS: usize = 6;
-pub const SUBCELL_ROWS: usize = 3;
-
-// ── Layout A — 4×6 macro (upper+lower) + 7×3 sub ─────────────────────────
-
-/// Layout A upper half: 4 cols × 3 rows, maps to top 50% of screen.
-///
-///   screen:  q  w  e  r   (row 0)
-///            a  s  d  f   (row 1)
-///            z  x  c  v   (row 2)
-pub const LAYOUT_A_UPPER_KEYS: [[char; 4]; 3] = [
-    ['q', 'w', 'e', 'r'],
-    ['a', 's', 'd', 'f'],
-    ['z', 'x', 'c', 'v'],
-];
-
-/// Layout A lower half: 4 cols × 3 rows, maps to bottom 50% of screen.
-///
-///   screen:  y  u  i  o   (row 3)
-///            h  j  k  l   (row 4)
-///            n  m  ,  .   (row 5)
-pub const LAYOUT_A_LOWER_KEYS: [[char; 4]; 3] = [
-    ['y', 'u', 'i', 'o'],
-    ['h', 'j', 'k', 'l'],
-    ['n', 'm', ',', '.'],
-];
-
-/// Layout A sub-grid: 7 cols × 3 rows (spans both hands, home cluster).
-///
-///   screen within macro cell:  e  r  t  y  u  i  o   (row 0)
-///                              d  f  g  h  j  k  l   (row 1)
-///                              c  v  b  n  m  ,  .   (row 2)
-pub const LAYOUT_A_SUB_KEYS: [[char; 7]; 3] = [
-    ['e', 'r', 't', 'y', 'u', 'i', 'o'],
-    ['d', 'f', 'g', 'h', 'j', 'k', 'l'],
-    ['c', 'v', 'b', 'n', 'm', ',', '.'],
-];
-
-pub const LAYOUT_A_MACRO_COLS: usize = 4;
-pub const LAYOUT_A_MACRO_ROWS: usize = 3;
-pub const LAYOUT_A_TOTAL_ROWS: usize = 6;
-pub const LAYOUT_A_SUB_COLS: usize = 7;
-pub const LAYOUT_A_SUB_ROWS: usize = 3;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── parse_layout_string ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_basic() {
+        let p = parse_layout_string("qwer\nasdf\nzxcv").unwrap();
+        assert_eq!(p.num_cols, 4);
+        assert_eq!(p.num_rows, 3);
+        assert_eq!(p.keys[0], &['q', 'w', 'e', 'r']);
+        assert_eq!(p.keys[2], &['z', 'x', 'c', 'v']);
+    }
+
+    #[test]
+    fn parse_skips_spaces() {
+        let spaced  = parse_layout_string("q w e r\na s d f").unwrap();
+        let compact = parse_layout_string("qwer\nasdf").unwrap();
+        assert_eq!(spaced.num_cols, compact.num_cols);
+        assert_eq!(spaced.num_rows, compact.num_rows);
+        assert_eq!(spaced.keys, compact.keys);
+    }
+
+    #[test]
+    fn parse_skips_empty_lines() {
+        let p = parse_layout_string("qwer\n\nasdf\n").unwrap();
+        assert_eq!(p.num_rows, 2);
+    }
+
+    #[test]
+    fn parse_err_mismatched_row_length() {
+        assert!(parse_layout_string("qwer\nasd").is_err());
+    }
+
+    #[test]
+    fn parse_err_duplicate_key() {
+        assert!(parse_layout_string("qqer\nasdf").is_err());
+    }
+
+    #[test]
+    fn parse_err_empty() {
+        assert!(parse_layout_string("").is_err());
+        assert!(parse_layout_string("   \n  ").is_err());
+    }
+
+    #[test]
+    fn parse_default_macro_keys() {
+        let p = parse_layout_string("qwer\nasdf\nzxcv\nyuio\nhjkl\nnm,.").unwrap();
+        assert_eq!(p.num_cols, 4);
+        assert_eq!(p.num_rows, 6);
+    }
+
+    #[test]
+    fn parse_default_sub_keys() {
+        let p = parse_layout_string("ertyuio\ndfghjkl\ncvbnm,.").unwrap();
+        assert_eq!(p.num_cols, 7);
+        assert_eq!(p.num_rows, 3);
+    }
+
+    #[test]
+    fn parse_default_subcell_keys() {
+        let p = parse_layout_string("ertyui\ndfghjk\nxcvbnm").unwrap();
+        assert_eq!(p.num_cols, 6);
+        assert_eq!(p.num_rows, 3);
+    }
+
+    #[test]
+    fn key_pos_found() {
+        let p = parse_layout_string("qwer\nasdf\nzxcv").unwrap();
+        assert_eq!(p.key_pos('q'), Some((0, 0)));
+        assert_eq!(p.key_pos('r'), Some((3, 0)));
+        assert_eq!(p.key_pos('z'), Some((0, 2)));
+        assert_eq!(p.key_pos('v'), Some((3, 2)));
+    }
+
+    #[test]
+    fn key_pos_not_found() {
+        let p = parse_layout_string("qwer\nasdf").unwrap();
+        assert_eq!(p.key_pos('z'), None);
+    }
+
+    // ── layout_geom ───────────────────────────────────────────────────────
+
+    #[test]
+    fn layout_geom_square_subcells() {
+        // 4×6 macro, 7×3 sub — default layout
+        let g = layout_geom(1440.0, 900.0, 4, 6, 7, 3);
+        assert!((g.macro_w - 7.0 * g.sub_size).abs() < 1e-9);
+        assert!((g.macro_h - 3.0 * g.sub_size).abs() < 1e-9);
+    }
+
+    #[test]
+    fn layout_geom_fits_screen() {
+        for (sw, sh) in [(1440.0_f64, 900.0), (2560.0, 1440.0), (1920.0, 1080.0)] {
+            let g = layout_geom(sw, sh, 4, 6, 7, 3);
+            assert!(g.grid_w <= sw + 1e-9, "grid_w {:.1} > sw {sw}", g.grid_w);
+            assert!(g.grid_h <= sh + 1e-9, "grid_h {:.1} > sh {sh}", g.grid_h);
+            assert!(g.offset_x >= -1e-9);
+            assert!(g.offset_y >= -1e-9);
+        }
+    }
+
+    #[test]
+    fn layout_geom_fills_one_axis() {
+        let g = layout_geom(1440.0, 900.0, 4, 6, 7, 3);
+        let fills_w = (g.grid_w - 1440.0).abs() < 1e-9;
+        let fills_h = (g.grid_h -  900.0).abs() < 1e-9;
+        assert!(fills_w || fills_h, "grid should fill at least one screen dimension");
+    }
+
+    #[test]
+    fn layout_geom_dynamic_dimensions() {
+        // Verify the geometry adapts to arbitrary layout sizes
+        let g = layout_geom(1920.0, 1080.0, 3, 4, 5, 3);
+        // total 15×12 sub-cells; sub_size = min(1920/15, 1080/12) = min(128, 90) = 90
+        assert!((g.sub_size - 90.0).abs() < 1e-9);
+    }
+
+    // ── keycode table ──────────────────────────────────────────────────────
 
     #[test]
     fn home_row_keycodes() {
@@ -135,148 +303,8 @@ mod tests {
         assert_eq!(keycode_name(0xFF), "?");
     }
 
-    // ── SUBCELL_KEYS tests ────────────────────────────────────────────────
-
-    #[test]
-    fn subcell_keys_count() {
-        assert_eq!(SUBCELL_KEYS.len(), 18);
-    }
-
-    #[test]
-    fn subcell_keys_top_row() {
-        let e = SUBCELL_KEYS.iter().find(|&&(k, _, _)| k == 'e').unwrap();
-        assert_eq!((e.1, e.2), (0, 0));
-        let i = SUBCELL_KEYS.iter().find(|&&(k, _, _)| k == 'i').unwrap();
-        assert_eq!((i.1, i.2), (5, 0));
-    }
-
-    #[test]
-    fn subcell_keys_home_row() {
-        let d = SUBCELL_KEYS.iter().find(|&&(k, _, _)| k == 'd').unwrap();
-        assert_eq!((d.1, d.2), (0, 1));
-        let k_key = SUBCELL_KEYS.iter().find(|&&(k, _, _)| k == 'k').unwrap();
-        assert_eq!((k_key.1, k_key.2), (5, 1));
-    }
-
-    #[test]
-    fn subcell_keys_bottom_row() {
-        let x = SUBCELL_KEYS.iter().find(|&&(k, _, _)| k == 'x').unwrap();
-        assert_eq!((x.1, x.2), (0, 2));
-        let m = SUBCELL_KEYS.iter().find(|&&(k, _, _)| k == 'm').unwrap();
-        assert_eq!((m.1, m.2), (5, 2));
-    }
-
-    #[test]
-    fn subcell_cols_rows_consistent() {
-        let max_col = SUBCELL_KEYS.iter().map(|&(_, c, _)| c as usize).max().unwrap();
-        let max_row = SUBCELL_KEYS.iter().map(|&(_, _, r)| r as usize).max().unwrap();
-        assert_eq!(max_col, SUBCELL_COLS - 1);
-        assert_eq!(max_row, SUBCELL_ROWS - 1);
-    }
-
-    // ── LAYOUT_A tests ────────────────────────────────────────────────────
-
-    #[test]
-    fn layout_a_upper_corners() {
-        assert_eq!(LAYOUT_A_UPPER_KEYS[0][0], 'q'); // top-left
-        assert_eq!(LAYOUT_A_UPPER_KEYS[0][3], 'r'); // top-right
-        assert_eq!(LAYOUT_A_UPPER_KEYS[2][0], 'z'); // bottom-left
-        assert_eq!(LAYOUT_A_UPPER_KEYS[2][3], 'v'); // bottom-right
-    }
-
-    #[test]
-    fn layout_a_lower_corners() {
-        assert_eq!(LAYOUT_A_LOWER_KEYS[0][0], 'y'); // top-left
-        assert_eq!(LAYOUT_A_LOWER_KEYS[0][3], 'o'); // top-right
-        assert_eq!(LAYOUT_A_LOWER_KEYS[2][0], 'n'); // bottom-left
-        assert_eq!(LAYOUT_A_LOWER_KEYS[2][3], '.'); // bottom-right
-    }
-
-    #[test]
-    fn layout_a_sub_corners() {
-        assert_eq!(LAYOUT_A_SUB_KEYS[0][0], 'e'); // top-left
-        assert_eq!(LAYOUT_A_SUB_KEYS[0][6], 'o'); // top-right
-        assert_eq!(LAYOUT_A_SUB_KEYS[2][0], 'c'); // bottom-left
-        assert_eq!(LAYOUT_A_SUB_KEYS[2][6], '.'); // bottom-right
-    }
-
-    #[test]
-    fn layout_a_sub_count() {
-        let count = LAYOUT_A_SUB_ROWS * LAYOUT_A_SUB_COLS;
-        assert_eq!(count, 21);
-    }
-
-    #[test]
-    fn layout_a_total_rows() {
-        assert_eq!(LAYOUT_A_TOTAL_ROWS, LAYOUT_A_MACRO_ROWS * 2);
-    }
-
-    // ── Keybind conflict: no duplicate keys within a layout ───────────────
-
-    #[test]
-    fn subcell_keys_no_duplicates() {
-        let mut seen = std::collections::HashSet::new();
-        for &(k, _, _) in SUBCELL_KEYS {
-            assert!(seen.insert(k), "duplicate subcell key: '{k}'");
-        }
-    }
-
-    #[test]
-    fn layout_a_macro_keys_no_duplicates() {
-        let mut seen = std::collections::HashSet::new();
-        for row in LAYOUT_A_UPPER_KEYS.iter().chain(LAYOUT_A_LOWER_KEYS.iter()) {
-            for &k in row {
-                assert!(seen.insert(k), "duplicate macro key: '{k}'");
-            }
-        }
-    }
-
-    #[test]
-    fn layout_a_sub_keys_no_duplicates() {
-        let mut seen = std::collections::HashSet::new();
-        for row in &LAYOUT_A_SUB_KEYS {
-            for &k in row {
-                assert!(seen.insert(k), "duplicate sub key: '{k}'");
-            }
-        }
-    }
-
-    #[test]
-    fn subcell_keys_each_position_is_unique() {
-        let mut positions = std::collections::HashSet::new();
-        for &(_, col, row) in SUBCELL_KEYS {
-            assert!(positions.insert((col, row)), "duplicate subcell position ({col},{row})");
-        }
-    }
-
-    #[test]
-    fn layout_a_macro_and_sub_keys_are_disambiguated_by_state() {
-        // Macro keys and sub keys intentionally share chars (e.g. 'e' is both a macro and a sub
-        // key). There is no within-state conflict because macro_first==None routes to the macro
-        // table and macro_first==Some routes to the sub table.  This test documents the overlap
-        // is expected and safe.
-        let macro_keys: std::collections::HashSet<char> = LAYOUT_A_UPPER_KEYS
-            .iter()
-            .chain(LAYOUT_A_LOWER_KEYS.iter())
-            .flat_map(|row| row.iter().copied())
-            .collect();
-        let sub_keys: std::collections::HashSet<char> = LAYOUT_A_SUB_KEYS
-            .iter()
-            .flat_map(|row| row.iter().copied())
-            .collect();
-        let overlap_count = macro_keys.intersection(&sub_keys).count();
-        // Overlap is expected; the important invariant is that it is never zero
-        // (which would suggest the layout tables diverged from the UX design).
-        assert!(
-            overlap_count > 0,
-            "expected macro/sub key overlap for shared home-cluster keys"
-        );
-    }
-
     #[test]
     fn tab_keycode_not_a_printable_char() {
-        // Tab (0x30) enters scroll mode; it has no keycode_to_char mapping, so it can never
-        // accidentally match a label char or a subcell key.
         assert_eq!(keycode_to_char(0x30), None, "Tab must not map to a printable char");
     }
 }

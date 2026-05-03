@@ -5,13 +5,6 @@ pub enum ClickButton {
     Middle,
 }
 
-/// Which grid layout is active. Used to route Escape in SubcellMode back to the right grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayoutTag {
-    Standard,
-    LayoutA,
-}
-
 /// Pixel bounding box of the selected cell, in screen coordinates (y from top).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CellBounds {
@@ -33,16 +26,10 @@ impl CellBounds {
 #[derive(Debug, Clone)]
 pub enum AppMode {
     Idle,
-    /// Standard 10×9 grid: waiting for 2-char label code.
-    Grid { first: Option<char> },
-    /// Layout A 4×3 macro grid: waiting for macro key then sub key.
+    /// Macro grid: waiting for macro key then sub key.
     GridA { macro_first: Option<char> },
-    /// A cell is chosen; waiting for subcell key or space/return.
-    Subcell {
-        bounds: CellBounds,
-        button: ClickButton,
-        layout: LayoutTag,
-    },
+    /// A sub-cell is chosen; waiting for subcell key or Space/Return.
+    Subcell { bounds: CellBounds, button: ClickButton },
     Scroll,
 }
 
@@ -69,8 +56,6 @@ pub struct AppState {
     /// Active mouse-button hold started by Space in scroll mode (x, y, button).
     /// Set on key-down, cleared and released on key-up.
     pub held_click: Option<(f64, f64, ClickButton)>,
-    /// Which grid layout launched scroll mode; used to return to it on Tab.
-    pub scroll_origin: Option<LayoutTag>,
 }
 
 impl AppState {
@@ -79,7 +64,6 @@ impl AppState {
             mode: AppMode::default(),
             drag_origin: None,
             held_click: None,
-            scroll_origin: None,
         }
     }
 }
@@ -97,15 +81,6 @@ mod tests {
     fn new_state_is_idle() {
         let s = AppState::new();
         assert!(matches!(s.mode, AppMode::Idle));
-    }
-
-    #[test]
-    fn grid_mode_carries_first_char() {
-        let m = AppMode::Grid { first: Some('a') };
-        match m {
-            AppMode::Grid { first: Some(c) } => assert_eq!(c, 'a'),
-            _ => panic!("unexpected variant"),
-        }
     }
 
     #[test]
@@ -150,11 +125,11 @@ mod tests {
     }
 
     #[test]
-    fn subcell_carries_layout_tag() {
+    fn subcell_mode_carries_button() {
         let b = CellBounds::new(0.0, 0.0, 100.0, 100.0);
-        let m = AppMode::Subcell { bounds: b, button: ClickButton::Left, layout: LayoutTag::LayoutA };
+        let m = AppMode::Subcell { bounds: b, button: ClickButton::Right };
         match m {
-            AppMode::Subcell { layout: LayoutTag::LayoutA, .. } => {}
+            AppMode::Subcell { button: ClickButton::Right, .. } => {}
             _ => panic!("unexpected variant"),
         }
     }

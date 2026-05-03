@@ -286,3 +286,83 @@ pub fn cli_uninstall_service() {
         Err(e) => eprintln!("failed to remove launch agent: {e}"),
     }
 }
+
+pub fn cli_init_config(force: bool) {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dir  = format!("{home}/.config/keytogo");
+    let path = format!("{dir}/config.toml");
+
+    if !force && std::path::Path::new(&path).exists() {
+        eprintln!("config already exists at {path}  (use --force to overwrite)");
+        std::process::exit(1);
+    }
+
+    let content = r##"# keytogo configuration
+# Run `keytogo --init-config --force` to regenerate this file with defaults.
+
+[layout]
+# Stage 1 — selects which screen region. Each line = one keyboard row.
+# Spaces within a line are ignored (use them for visual alignment).
+macro_keys = """
+qwer
+asdf
+zxcv
+yuio
+hjkl
+nm,.
+"""
+
+# Stage 2 — selects a sub-cell within the chosen region.
+sub_keys = """
+ertyuio
+dfghjkl
+cvbnm,.
+"""
+
+# Stage 3 — fine-positions the cursor inside the selected sub-cell.
+subcell_keys = """
+ertyui
+dfghjk
+xcvbnm
+"""
+
+[subcell]
+# Max milliseconds between taps to count as double/triple click.
+tap_window_ms = 250
+
+[keybinds]
+# Modifier that selects right-click: "shift" | "ctrl" | "alt"
+right_click_modifier = "shift"
+# Modifier that selects middle-click: "shift" | "ctrl" | "alt"
+middle_click_modifier = "ctrl"
+
+[scroll]
+line_px = 60
+half_page_lines = 10
+
+[style]
+overlay_bg  = "#00000088"
+cell_border = "#ffffff33"
+label_color = "#ffffffff"
+active_cell = "#ffff0055"
+subcell_dot = "#00ff88cc"
+
+[hud]
+# Where to anchor the scroll HUD pill.
+# Values: "bottom-center" | "bottom-left" | "bottom-right"
+#         | "top-center"  | "top-left"    | "top-right"
+position = "bottom-center"
+margin_x = 0.0
+margin_y = 64.0
+"##;
+
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("failed to create config dir {dir}: {e}");
+        std::process::exit(1);
+    }
+    if let Err(e) = std::fs::write(&path, content) {
+        eprintln!("failed to write config to {path}: {e}");
+        std::process::exit(1);
+    }
+    println!("config written to {path}");
+}
