@@ -28,14 +28,17 @@ fn main() {
         _ => {}
     }
 
-    if !accessibility::is_trusted(true) {
+    if !accessibility::is_trusted(false) {
+        // Open System Settings once to prompt the user, then poll silently.
+        accessibility::is_trusted(true);
         eprintln!(
             "keytogo needs Accessibility permission.\n\
              Open System Settings → Privacy & Security → Accessibility,\n\
-             click +, navigate to ~/.cargo/bin/, select keytogo, and toggle it ON.\n\
-             Then run keytogo again."
+             click +, navigate to ~/.cargo/bin/, select keytogo, and toggle it ON."
         );
-        std::process::exit(1);
+        while !accessibility::is_trusted(false) {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
     }
 
     log::info!("Accessibility permission granted.");
