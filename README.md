@@ -2,6 +2,8 @@
 
 A Rust-based macOS keyboard-only mouse navigation utility. Control your cursor entirely from the keyboard — no trackpad, no mouse required. Inspired by warpd and mouseless.
 
+https://github.com/user-attachments/assets/237cbb22-5714-4ad8-b69d-245ef4f5600e
+
 **Status:** Active development | **macOS 13+** | **Requires Accessibility permission**
 
 ---
@@ -90,7 +92,7 @@ keytogo uses a **three-stage keyboard navigation model** to place the cursor any
 Press the activation chord from any context:
 
 ```
-Left-Cmd + Right-Cmd + Space
+Right-Cmd + Space
 ```
 
 A full-screen overlay appears. Press **Escape** at any time to return to Idle.
@@ -164,7 +166,7 @@ Press **Tab** from the macro grid to enter Scroll mode. A HUD appears showing av
 
 | Action | Key |
 |---|---|
-| Activate | Left-Cmd + Right-Cmd + Space |
+| Activate | Right-Cmd + Space |
 | Back one stage | Backspace |
 | Cancel to Idle | Escape |
 | Enter Scroll mode | Tab (from grid overlay) |
@@ -177,7 +179,7 @@ Press **Tab** from the macro grid to enter Scroll mode. A HUD appears showing av
 
 ## Menu bar
 
-The status bar icon (𒀭) provides quick access to:
+The status bar icon provides quick access to:
 
 - **Pause / Resume** — disable keytogo temporarily without stopping the daemon; all keys pass through normally while paused
 - **Launch at Login** — toggle the LaunchAgent
