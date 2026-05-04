@@ -1,167 +1,272 @@
 # keytogo
 
-A Rust-based macOS keyboard-only mouse navigation utility. Control the mouse entirely from your keyboard without touching the trackpad or mouse. Inspired by warpd and mouseless.
+A Rust-based macOS keyboard-only mouse navigation utility. Control your cursor entirely from the keyboard — no trackpad, no mouse required. Inspired by warpd and mouseless.
 
-**Status:** Active development | **macOS 13+** | **Requires Accessibility permissions**
+**Status:** Active development | **macOS 13+** | **Requires Accessibility permission**
+
+---
 
 ## Installation
 
-### From Source
+### Homebrew (recommended)
 
-Install directly from the repository:
+```sh
+brew tap unitf90/tap
+brew install keytogo
+```
+
+### One-line script
+
+Downloads and installs the latest pre-built binary for your architecture:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/unitf90/keytogo/main/install.sh | sh
+```
+
+### Download a release binary
+
+Grab the latest archive from the [Releases page](https://github.com/unitf90/keytogo/releases):
+
+| Architecture | File |
+|---|---|
+| Apple Silicon | `keytogo-aarch64-apple-darwin.tar.gz` |
+| Intel | `keytogo-x86_64-apple-darwin.tar.gz` |
+
+```sh
+tar -xzf keytogo-*.tar.gz
+sudo mv keytogo /usr/local/bin/
+```
+
+### Build from source
+
+Requires the Rust toolchain (`rustup.rs`):
 
 ```sh
 cargo install --git https://github.com/unitf90/keytogo
 ```
 
-### Grant Accessibility Permissions
+---
 
-The application requires accessibility permissions to control the mouse and detect keyboard input:
+### Grant Accessibility permission
 
-1. Open System Settings
-2. Navigate to **Privacy & Security → Accessibility**
-3. Click the lock icon and authenticate
-4. Add or enable `keytogo` in the application list
+keytogo intercepts keyboard events system-wide via the macOS CGEventTap API, which requires explicit user consent:
 
-### Install as Daemon (Recommended)
+1. Open **System Settings → Privacy & Security → Accessibility**
+2. Click the lock and authenticate
+3. Add or enable `keytogo` in the list
 
-Install the daemon so keytogo runs automatically at login:
+Without this permission the event tap cannot start. You will be prompted on first launch.
+
+---
+
+### Run at login (recommended)
+
+Install a per-user LaunchAgent so keytogo starts automatically at login:
 
 ```sh
-keytogo --install-service
+keytogo --install
 ```
 
-Or run once without installing:
+To remove it:
+
+```sh
+keytogo --uninstall
+```
+
+Or run once in the foreground without installing as a daemon:
 
 ```sh
 keytogo
 ```
 
-## Usage
+---
 
-### Activation
+## How navigation works
 
-Press the activation chord to show the grid overlay:
+keytogo uses a **three-stage keyboard navigation model** to place the cursor anywhere on screen without moving your hands.
 
-```
-Right-Cmd + Space
-```
+### Activate
 
-This displays a full-screen grid overlay. Press Escape to hide it without selecting.
-
-### Layout Modes
-
-keytogo supports two layout modes (configurable in `~/.config/keytogo/config.toml`):
-
-#### Layout A (Default)
-
-A two-stage selection process:
-
-1. **Grid stage**: A grid of labeled cells appears
-2. **SubcellMode stage**: After selecting a cell, a 7×3 grid appears to pick the exact sub-position within that cell
-
-Press any labeled key to select a cell, then use the SubcellMode grid to refine the position.
-
-### SubcellMode Reference
-
-After selecting a cell in Layout A, refine the position using this grid:
+Press the activation chord from any context:
 
 ```
-e  r  t  y  u  i  o
-d  f  g  h  j  k  l
-c  v  b  n  m  ,  .
+Left-Cmd + Right-Cmd + Space
 ```
 
-Each key corresponds to a position within the selected cell.
+A full-screen overlay appears. Press **Escape** at any time to return to Idle.
 
-### Click Actions
+### Stage 1 — Macro grid
 
-The modifier keys control how the selection is processed:
+The screen is divided into a grid of labeled cells, each identified by a single key. The layout is configurable (see [Configuration](#configuration)); the default covers the full screen with your keyboard home rows.
 
-| Input | Action |
-|-------|--------|
-| Plain key | Left click at selected position |
-| Shift | Right click at selected position |
-| Ctrl | Middle click at selected position |
+Press a key to select a macro cell and highlight it. The overlay updates to show which sub-cells are available inside it.
+
+**Backspace** — return to Idle (dismiss overlay).
+
+### Stage 2 — Sub-cell grid
+
+After the macro key, press a second key to zoom into one of the sub-cells within the selected macro region. The cursor moves to the center of the selected sub-cell and the subcell precision grid appears.
+
+**Backspace** — return to Stage 1 (clear macro selection, pick a different macro cell).  
+**Escape** — return to Idle.
+
+### Stage 3 — Subcell precision
+
+A fine-grained grid fills the selected region. Press a key to place the cursor at that exact position and fire a click.
+
+**Backspace** — return to Stage 2 (keep your macro key, re-pick the sub-cell).  
+**Escape** — return to Stage 1.
+
+---
+
+### Click actions
+
+Apply modifier keys at the final keypress to change what happens on landing:
+
+| Modifier | Action |
+|---|---|
+| *(none)* | Left click |
+| Shift | Right click |
+| Ctrl | Middle click |
 | Option | Move cursor only (no click) |
 | Option + Shift | Drag from activation point to selected position |
 
-### ScrollMode
-
-From any grid overlay, press **Tab** to enter ScrollMode:
-
-| Key | Action |
-|-----|--------|
-| j | Scroll down |
-| k | Scroll up |
-| h | Scroll left |
-| l | Scroll right |
-| d | Scroll half-page down |
-| u | Scroll half-page up |
-| Escape | Exit ScrollMode |
-
 ### Multi-click
 
-Press the same key multiple times within a 250ms window to trigger:
+Press the same subcell key again within the click window (default 250 ms) to upgrade the click:
 
-- 2nd press → double click
-- 3rd press → triple click
+- 2nd press → double-click
+- 3rd press → triple-click
 
-### Drag Mode
+---
 
-To drag from a location:
+## Scroll mode
 
-1. Navigate to the starting position
-2. Press Option + Shift + the final position key
+Press **Tab** from the macro grid to enter Scroll mode. A HUD appears showing available keys.
 
-The cursor moves to your activation point, then drags to the selected position.
+| Key | Action |
+|---|---|
+| `j` | Scroll down |
+| `k` | Scroll up |
+| `h` | Scroll left |
+| `l` | Scroll right |
+| `d` | Half-page down |
+| `u` | Half-page up |
+| `Shift` + any direction | Fast scroll (3× speed) |
+| `Space` | Hold left button (for drag-scrolling) |
+| `Option + Space` | Hold right button |
+| `Tab` | Return to grid |
+| `Escape` | Exit to Idle |
 
-## Menu Bar
+---
 
-The application includes a menu bar icon with the following options:
+## Keyboard reference
 
-- **Pause/Resume** — Temporarily disable keytogo while keeping the daemon running
-- **Launch at Login** — Toggle automatic startup with your system
-- **Quit** — Exit keytogo
+| Action | Key |
+|---|---|
+| Activate | Left-Cmd + Right-Cmd + Space |
+| Back one stage | Backspace |
+| Cancel to Idle | Escape |
+| Enter Scroll mode | Tab (from grid overlay) |
+| Exit Scroll mode | Escape or Tab |
+| Double / triple click | Repeat subcell key within window |
+| Drag to position | Option + Shift + subcell key |
+| Move cursor only | Option + subcell key |
+
+---
+
+## Menu bar
+
+The status bar icon (𒀭) provides quick access to:
+
+- **Pause / Resume** — disable keytogo temporarily without stopping the daemon; all keys pass through normally while paused
+- **Launch at Login** — toggle the LaunchAgent
+- **Quit**
+
+---
 
 ## Configuration
 
-All configuration is optional. Create a config file at:
+All configuration is optional — the defaults work out of the box. To generate a config file with all options pre-filled:
 
+```sh
+keytogo --init-config
 ```
-~/.config/keytogo/config.toml
+
+This writes `~/.config/keytogo/config.toml`. Edit it, then restart keytogo (or run `keytogo --stop && keytogo --start`).
+
+For the full reference see [docs/config.md](./docs/config.md).
+
+### Layout
+
+The three grids are fully configurable. Each is a multiline string where each line is a keyboard row; spaces are ignored and can be used for visual alignment. Row lengths must all match within a grid.
+
+```toml
+[layout]
+# Stage 1 — macro grid (rows × cols inferred from the string)
+macro_keys = """
+qwer
+asdf
+zxcv
+yuio
+hjkl
+nm,.
+"""
+
+# Stage 2 — sub-cell grid
+# Omit this key entirely to let keytogo compute square sub-cells automatically
+# based on your screen's aspect ratio.
+sub_keys = """
+ertyuio
+dfghjkl
+cvbnm,.
+"""
+
+# Stage 3 — precision subcell grid
+subcell_keys = """
+ertyui
+dfghjk
+xcvbnm
+"""
 ```
 
-For detailed configuration options, defaults, and examples, see [docs/config.md](./docs/config.md).
+### Scroll
 
-Common configuration options include:
+```toml
+[scroll]
+line_px = 60           # pixels scrolled per j/k/h/l press
+half_page_lines = 10   # lines for d/u half-page commands
+```
 
-- Grid layout mode (`grid_a` or `grid`)
-- Keybinds and chords
-- Colors and UI scaling
-- Scroll behavior
-- Multi-click timing
+### Scroll HUD position
 
-## Keybind Reference
+```toml
+[hud]
+# Anchor point for the scroll mode HUD pill.
+# bottom-center | bottom-left | bottom-right | top-center | top-left | top-right
+position = "bottom-center"
+margin_x = 0.0    # horizontal offset from the edge (ignored for *-center)
+margin_y = 64.0   # vertical offset from the screen edge
+```
 
-| Action | Default |
-|--------|---------|
-| Show grid | Right-Cmd + Left-Cmd + Space |
-| Hide grid / Cancel | Escape |
-| Enter ScrollMode | Tab |
-| Exit ScrollMode | Escape |
-| Double/Triple click | Repeat key within 250ms |
-| Drag mode | Option + Shift + target |
+### Multi-click timing
+
+```toml
+[subcell]
+tap_window_ms = 250   # max ms between presses to count as double/triple click
+```
+
+---
 
 ## Requirements
 
-- **macOS 13** or later
-- **Rust toolchain** (for building from source)
-- Accessibility permissions (see Installation)
+- macOS 13 Ventura or later
+- Accessibility permission (prompted on first launch)
+- Rust toolchain (build from source only)
+
+---
 
 ## Documentation
 
-For more detailed information, see:
-
-- [Configuration](./docs/config.md) — All config keys and examples
-- [Testing](./docs/testing.md) — Test coverage and CLI flags
+- [Configuration reference](./docs/config.md) — all config keys, types, defaults, examples
+- [Testing](./docs/testing.md) — test coverage, CLI flags, running tests

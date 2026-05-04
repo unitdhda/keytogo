@@ -47,7 +47,10 @@ pub struct ParsedLayouts {
 
 impl Config {
     fn load_from_disk() -> Self {
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_else(|_| {
+            log::warn!("HOME env var unset; config path will be relative to CWD");
+            String::new()
+        });
         let path = format!("{}/.config/keytogo/config.toml", home);
         match std::fs::read_to_string(&path) {
             Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
@@ -59,7 +62,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub layout:  LayoutConfig,
@@ -133,19 +136,6 @@ pub struct HudConfig {
 }
 
 // ── Defaults ───────────────────────────────────────────────────────────────
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            layout:  LayoutConfig::default(),
-            subcell: SubcellConfig::default(),
-            keybinds: KeybindsConfig::default(),
-            scroll:  ScrollConfig::default(),
-            style:   StyleConfig::default(),
-            hud:     HudConfig::default(),
-        }
-    }
-}
 
 impl Default for LayoutConfig {
     fn default() -> Self {

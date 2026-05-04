@@ -23,20 +23,15 @@ impl CellBounds {
     pub fn center_y(&self) -> f64 { self.y + self.h / 2.0 }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum AppMode {
+    #[default]
     Idle,
     /// Macro grid: waiting for macro key then sub key.
     GridA { macro_first: Option<char> },
     /// A sub-cell is chosen; waiting for subcell key or Space/Return.
     Subcell { bounds: CellBounds, button: ClickButton, macro_key: char },
     Scroll,
-}
-
-impl Default for AppMode {
-    fn default() -> Self {
-        AppMode::Idle
-    }
 }
 
 /// Accumulated tap waiting for the 250 ms multi-click window.

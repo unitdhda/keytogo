@@ -2,7 +2,7 @@
 ///   GridA   — macro grid with optional macro-key highlight
 ///   Subcell — semi-transparent background + selected cell + ortholinear subcell grid
 use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -30,7 +30,7 @@ pub enum OverlayState {
 
 thread_local! {
     // No `const { }` — String fields make the full type non-const-constructable.
-    static STATE: Cell<OverlayState> = Cell::new(OverlayState::Hidden);
+    static STATE: Cell<OverlayState> = const { Cell::new(OverlayState::Hidden) };
 }
 
 fn set_state(s: OverlayState) {
@@ -38,7 +38,7 @@ fn set_state(s: OverlayState) {
 }
 
 static INITIALISED: AtomicBool = AtomicBool::new(false);
-static mut VIEW_PTR: *mut AnyObject = std::ptr::null_mut();
+static VIEW_PTR: AtomicPtr<AnyObject> = AtomicPtr::new(std::ptr::null_mut());
 
 // ── OverlayView ────────────────────────────────────────────────────────────
 
@@ -225,6 +225,7 @@ fn draw_label_alpha(text: &str, x: f64, y: f64, size: f64, alpha: f64) {
     draw_label_color(text, x, y, size, 1.0, 1.0, 1.0, alpha);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_label_color(text: &str, x: f64, y: f64, size: f64, r: f64, g: f64, b: f64, a: f64) {
     unsafe {
         use objc2_app_kit::{NSFontAttributeName, NSForegroundColorAttributeName};
@@ -297,7 +298,7 @@ fn draw_scroll_hud(view: &OverlayView, key: &str, action: &str) {
     };
     let hud_w = hud_w.max(120.0); // minimum sane width
 
-    let (hud_x, hud_y) = hud_position(&cfg, sw, sh, hud_w, HUD_H);
+    let (hud_x, hud_y) = hud_position(cfg, sw, sh, hud_w, HUD_H);
 
     let hud_rect = NSRect {
         origin: NSPoint { x: hud_x, y: hud_y },
@@ -377,7 +378,7 @@ pub fn init(mtm: MainThreadMarker) {
     unsafe {
         window.setContentView(Some(&view));
         window.orderFrontRegardless();
-        VIEW_PTR = Retained::into_raw(view) as *mut AnyObject;
+        VIEW_PTR.store(Retained::into_raw(view) as *mut AnyObject, Ordering::Release);
         let _ = Retained::into_raw(window);
     }
 
@@ -423,10 +424,11 @@ pub fn hide() {
 }
 
 fn redraw() {
+    let ptr = VIEW_PTR.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return;
+    }
     unsafe {
-        if VIEW_PTR.is_null() {
-            return;
-        }
-        let _: () = msg_send![&*VIEW_PTR, setNeedsDisplay: true];
+        let _: () = msg_send![&*ptr, setNeedsDisplay: true];
     }
 }

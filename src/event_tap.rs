@@ -1,5 +1,5 @@
 use std::os::raw::c_void;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use std::cell::Cell;
 
@@ -18,8 +18,11 @@ static STATE_PTR:         AtomicPtr<AppState>  = AtomicPtr::new(std::ptr::null_m
 static PENDING_TIMER:     AtomicPtr<c_void>    = AtomicPtr::new(std::ptr::null_mut());
 static SCROLL_HUD_TIMER:  AtomicPtr<c_void>    = AtomicPtr::new(std::ptr::null_mut());
 
+static TAP_INITIALISED:   AtomicBool = AtomicBool::new(false);
+static TAP_TIMEOUT_COUNT: AtomicU32  = AtomicU32::new(0);
+
 thread_local! {
-    static PENDING_TAP: Cell<Option<PendingTap>> = Cell::new(None);
+    static PENDING_TAP: Cell<Option<PendingTap>> = const { Cell::new(None) };
 }
 
 // ── FFI types ──────────────────────────────────────────────────────────────
@@ -131,10 +134,15 @@ unsafe extern "C" fn tap_callback(
     if event_type == K_CG_EVENT_TAP_DISABLED_TIMEOUT
         || event_type == K_CG_EVENT_TAP_DISABLED_USER
     {
-        let port = TAP_PORT.load(Ordering::Relaxed);
+        let port = TAP_PORT.load(Ordering::Acquire);
         if !port.is_null() {
+            let n = TAP_TIMEOUT_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            if n >= 5 {
+                log::error!("event tap disabled by macOS {n} times consecutively — exiting");
+                std::process::exit(1);
+            }
             CGEventTapEnable(port, true);
-            log::warn!("tap disabled by macOS — re-enabled");
+            log::warn!("tap disabled by macOS — re-enabled (#{n})");
         }
         return event;
     }
@@ -190,16 +198,16 @@ unsafe extern "C" fn tap_timer_callback(_timer: CFRunLoopTimerRef, _info: *mut c
         if let Some(tap) = cell.take() {
             let pos = CGPoint::new(tap.x, tap.y);
             mouse::click(pos, tap.button, tap.count);
-            let state = &mut *STATE_PTR.load(Ordering::Relaxed);
+            let state = &mut *STATE_PTR.load(Ordering::Acquire);
             state.mode = AppMode::Idle;
             overlay::hide();
         }
     });
-    PENDING_TIMER.store(std::ptr::null_mut(), Ordering::Relaxed);
+    PENDING_TIMER.store(std::ptr::null_mut(), Ordering::Release);
 }
 
 fn cancel_pending_timer() {
-    let old = PENDING_TIMER.swap(std::ptr::null_mut(), Ordering::Relaxed);
+    let old = PENDING_TIMER.swap(std::ptr::null_mut(), Ordering::AcqRel);
     if !old.is_null() {
         unsafe { CFRunLoopTimerInvalidate(old); CFRelease(old as *const c_void); }
     }
@@ -215,7 +223,7 @@ fn schedule_tap_timer() {
         )
     };
     unsafe { CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, kCFRunLoopCommonModes); }
-    PENDING_TIMER.store(timer, Ordering::Relaxed);
+    PENDING_TIMER.store(timer, Ordering::Release);
 }
 
 fn fire_pending_tap_now(state: &mut AppState) {
@@ -234,11 +242,11 @@ fn fire_pending_tap_now(state: &mut AppState) {
 
 unsafe extern "C" fn hud_fade_callback(_timer: CFRunLoopTimerRef, _info: *mut c_void) {
     overlay::hide();
-    SCROLL_HUD_TIMER.store(std::ptr::null_mut(), Ordering::Relaxed);
+    SCROLL_HUD_TIMER.store(std::ptr::null_mut(), Ordering::Release);
 }
 
 fn cancel_hud_timer() {
-    let old = SCROLL_HUD_TIMER.swap(std::ptr::null_mut(), Ordering::Relaxed);
+    let old = SCROLL_HUD_TIMER.swap(std::ptr::null_mut(), Ordering::AcqRel);
     if !old.is_null() {
         unsafe { CFRunLoopTimerInvalidate(old); CFRelease(old as *const c_void); }
     }
@@ -254,7 +262,7 @@ fn schedule_hud_fade(delay_secs: f64) {
         )
     };
     unsafe { CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, kCFRunLoopCommonModes); }
-    SCROLL_HUD_TIMER.store(timer, Ordering::Relaxed);
+    SCROLL_HUD_TIMER.store(timer, Ordering::Release);
 }
 
 // ── Mode handlers ──────────────────────────────────────────────────────────
@@ -414,7 +422,7 @@ fn on_subcell(
         mouse::move_cursor(pos.x, pos.y);
 
         let is_repeat = PENDING_TAP.with(|cell| {
-            cell.get().map_or(false, |t| t.key == click_key)
+            cell.get().is_some_and(|t| t.key == click_key)
         });
 
         if is_repeat {
@@ -542,8 +550,11 @@ pub fn run() {
 }
 
 fn setup_tap(block: bool) {
+    if TAP_INITIALISED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let raw_state = Box::into_raw(Box::new(AppState::new()));
-    STATE_PTR.store(raw_state, Ordering::Relaxed);
+    STATE_PTR.store(raw_state, Ordering::Release);
     let state = raw_state as *mut c_void;
 
     let mask = event_mask(&[
@@ -568,7 +579,7 @@ fn setup_tap(block: bool) {
         std::process::exit(1);
     }
 
-    TAP_PORT.store(tap_port, Ordering::Relaxed);
+    TAP_PORT.store(tap_port, Ordering::Release);
 
     let source = unsafe { CFMachPortCreateRunLoopSource(std::ptr::null(), tap_port, 0) };
     if source.is_null() {
@@ -593,7 +604,7 @@ fn setup_tap(block: bool) {
 
 /// Disable the event tap (keys pass through; overlay is hidden by menu.rs).
 pub fn pause() {
-    let port = TAP_PORT.load(Ordering::Relaxed);
+    let port = TAP_PORT.load(Ordering::Acquire);
     if !port.is_null() {
         unsafe { CGEventTapEnable(port, false); }
         log::info!("event tap paused");
@@ -602,7 +613,7 @@ pub fn pause() {
 
 /// Re-enable the event tap after a pause.
 pub fn resume() {
-    let port = TAP_PORT.load(Ordering::Relaxed);
+    let port = TAP_PORT.load(Ordering::Acquire);
     if !port.is_null() {
         unsafe { CGEventTapEnable(port, true); }
         log::info!("event tap resumed");

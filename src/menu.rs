@@ -31,7 +31,10 @@ static LAUNCH_ITEM: AtomicPtr<NSMenuItem> = AtomicPtr::new(std::ptr::null_mut())
 const LABEL: &str = "com.keytogo";
 
 fn launch_agents_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_else(|_| {
+        log::warn!("HOME env var unset; launch agent path will be relative to CWD");
+        String::new()
+    });
     PathBuf::from(home).join("Library").join("LaunchAgents")
 }
 
@@ -49,8 +52,13 @@ pub fn is_launch_agent_installed() -> bool {
     plist_path().exists()
 }
 
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
 pub fn install_launch_agent() -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
+    let exe_str = xml_escape(&exe.display().to_string());
     // No KeepAlive — starts at login, does not auto-restart on quit.
     // No log files — avoid writing key-event context to disk.
     let content = format!(
@@ -70,7 +78,7 @@ pub fn install_launch_agent() -> std::io::Result<()> {
 </dict>
 </plist>
 "#,
-        exe.display()
+        exe_str
     );
     std::fs::create_dir_all(launch_agents_dir())?;
     std::fs::write(plist_path(), &content)?;
@@ -111,8 +119,7 @@ declare_class!(
     unsafe impl MenuController {
         #[method(togglePause:)]
         fn toggle_pause(&self, _sender: &AnyObject) {
-            let now_paused = !PAUSED.load(Ordering::Relaxed);
-            PAUSED.store(now_paused, Ordering::Relaxed);
+            let now_paused = !PAUSED.fetch_xor(true, Ordering::Relaxed);
             if now_paused {
                 event_tap::pause();
                 overlay::hide();
@@ -238,7 +245,7 @@ pub fn install(mtm: MainThreadMarker) {
         controller_any,
     );
     menu.addItem(&pause_item);
-    PAUSE_ITEM.store(Retained::into_raw(pause_item) as *mut NSMenuItem, Ordering::Relaxed);
+    PAUSE_ITEM.store(Retained::into_raw(pause_item), Ordering::Relaxed);
 
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
@@ -253,10 +260,7 @@ pub fn install(mtm: MainThreadMarker) {
         unsafe { launch_item.setState(NSControlStateValueOn) };
     }
     menu.addItem(&launch_item);
-    LAUNCH_ITEM.store(
-        Retained::into_raw(launch_item) as *mut NSMenuItem,
-        Ordering::Relaxed,
-    );
+    LAUNCH_ITEM.store(Retained::into_raw(launch_item), Ordering::Relaxed);
 
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
@@ -351,7 +355,10 @@ pub fn cli_install_service() { cli_install() }
 pub fn cli_uninstall_service() { cli_uninstall() }
 
 pub fn cli_init_config(force: bool) {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_else(|_| {
+        log::warn!("HOME env var unset; config path will be relative to CWD");
+        String::new()
+    });
     let dir  = format!("{home}/.config/keytogo");
     let path = format!("{dir}/config.toml");
 

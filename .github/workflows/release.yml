@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14       # native Apple Silicon
+          - target: x86_64-apple-darwin
+            runner: macos-13       # native Intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-release-
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Package
+        run: |
+          ARCHIVE="keytogo-${{ matrix.target }}.tar.gz"
+          cp target/${{ matrix.target }}/release/keytogo keytogo
+          tar -czf "$ARCHIVE" keytogo
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keytogo-${{ matrix.target }}
+          path: |
+            keytogo-${{ matrix.target }}.tar.gz
+            keytogo-${{ matrix.target }}.tar.gz.sha256
+          retention-days: 1
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Show checksums
+        run: cat dist/*.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "keytogo ${{ github.ref_name }}"
+          body: |
+            ## keytogo ${{ github.ref_name }}
+
+            ### Install
+
+            **One-line script (recommended):**
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/unitf90/keytogo/main/install.sh | sh
+            ```
+
+            **Homebrew:**
+            ```sh
+            brew tap unitf90/tap && brew install keytogo
+            ```
+
+            **Manual download:** see assets below — grab the `.tar.gz` for your architecture,
+            extract, and move `keytogo` to `/usr/local/bin/`.
+
+            ### SHA-256 checksums
+            ```
+            $(cat dist/*.sha256)
+            ```
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

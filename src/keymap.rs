@@ -114,13 +114,13 @@ pub fn square_sub_cols(
 ) -> usize {
     let target = sw * macro_rows as f64 * sc_rows as f64
                / (sh * macro_cols as f64 * sc_cols as f64);
-    ((target * 3.0).round() as usize).max(1).min(MAX_SUB_COLS)
+    ((target * 3.0).round() as usize).clamp(1, MAX_SUB_COLS)
 }
 
 /// Build a sub_l layout string (3 rows, `sub_cols` keys each) from the pool.
 /// Always produces a valid, duplicate-free string accepted by `parse_layout_string`.
 pub fn generate_sub_layout(sub_cols: usize) -> String {
-    let cols = sub_cols.min(MAX_SUB_COLS).max(1);
+    let cols = sub_cols.clamp(1, MAX_SUB_COLS);
     SUB_KEY_POOL.iter()
         .map(|row| row.chars().take(cols).collect::<String>())
         .collect::<Vec<_>>()
