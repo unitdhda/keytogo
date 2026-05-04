@@ -29,7 +29,7 @@ pub enum AppMode {
     /// Macro grid: waiting for macro key then sub key.
     GridA { macro_first: Option<char> },
     /// A sub-cell is chosen; waiting for subcell key or Space/Return.
-    Subcell { bounds: CellBounds, button: ClickButton },
+    Subcell { bounds: CellBounds, button: ClickButton, macro_key: char },
     Scroll,
 }
 
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn subcell_mode_carries_button() {
         let b = CellBounds::new(0.0, 0.0, 100.0, 100.0);
-        let m = AppMode::Subcell { bounds: b, button: ClickButton::Right };
+        let m = AppMode::Subcell { bounds: b, button: ClickButton::Right, macro_key: 'a' };
         match m {
             AppMode::Subcell { button: ClickButton::Right, .. } => {}
             _ => panic!("unexpected variant"),

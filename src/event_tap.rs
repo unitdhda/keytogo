@@ -66,6 +66,7 @@ const KEYCODE_TAB:    u16 = 0x30;
 const KEYCODE_SPACE:  u16 = 0x31;
 const KEYCODE_ESCAPE: u16 = 0x35;
 const KEYCODE_RETURN: u16 = 0x24;
+const KEYCODE_DELETE: u16 = 0x33; // Backspace
 
 const ACTIVATION_MODS: u64 = FLAGS_CMD | FLAGS_RCMD;
 
@@ -177,7 +178,7 @@ unsafe extern "C" fn tap_callback(
     match mode {
         AppMode::Idle                    => on_idle(state, kc, flags, event),
         AppMode::GridA { macro_first }   => on_grid_a(state, kc, flags, macro_first),
-        AppMode::Subcell { bounds, button } => on_subcell(state, kc, flags, bounds, button),
+        AppMode::Subcell { bounds, button, macro_key } => on_subcell(state, kc, flags, bounds, button, macro_key),
         AppMode::Scroll                  => on_scroll(state, kc, flags),
     }
 }
@@ -278,6 +279,22 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
         return std::ptr::null_mut();
     }
 
+    if kc == KEYCODE_DELETE {
+        match macro_first {
+            Some(_) => {
+                state.mode = AppMode::GridA { macro_first: None };
+                overlay::show_grid_a(None);
+                log::info!("← GridA (backspace macro key)");
+            }
+            None => {
+                state.mode = AppMode::Idle;
+                overlay::hide();
+                log::info!("← Idle (backspace)");
+            }
+        }
+        return std::ptr::null_mut();
+    }
+
     if kc == KEYCODE_TAB && macro_first.is_none() {
         state.mode = AppMode::Scroll;
         overlay::show_scroll_mode();
@@ -325,7 +342,7 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
                     }
                     let button = modifier_button(flags);
                     log::info!("→ SubcellMode");
-                    state.mode = AppMode::Subcell { bounds, button };
+                    state.mode = AppMode::Subcell { bounds, button, macro_key: mc };
                     overlay::show_subcell(bounds.x, bounds.y, bounds.w, bounds.h);
                 }
                 _ => {
@@ -341,11 +358,12 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
 }
 
 fn on_subcell(
-    state:  &mut AppState,
-    kc:     u16,
-    flags:  u64,
-    bounds: CellBounds,
-    button: ClickButton,
+    state:     &mut AppState,
+    kc:        u16,
+    flags:     u64,
+    bounds:    CellBounds,
+    button:    ClickButton,
+    macro_key: char,
 ) -> CGEventRef {
     if kc == KEYCODE_ESCAPE {
         fire_pending_tap_now(state);
@@ -354,6 +372,13 @@ fn on_subcell(
             overlay::show_grid_a(None);
         }
         log::info!("→ GridA");
+        return std::ptr::null_mut();
+    }
+
+    if kc == KEYCODE_DELETE {
+        state.mode = AppMode::GridA { macro_first: Some(macro_key) };
+        overlay::show_grid_a(Some(macro_key));
+        log::info!("← GridA macro_first={macro_key} (backspace)");
         return std::ptr::null_mut();
     }
 
