@@ -10,13 +10,6 @@ https://github.com/user-attachments/assets/237cbb22-5714-4ad8-b69d-245ef4f5600e
 
 ## Installation
 
-### Homebrew (recommended)
-
-```sh
-brew tap unitf90/tap
-brew install keytogo
-```
-
 ### One-line script
 
 Downloads and installs the latest pre-built binary for your architecture:
