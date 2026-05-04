@@ -13,18 +13,28 @@ use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
 
 fn main() {
+    // Only emit warn+ by default; state-change info is emitted at info level.
+    // Set RUST_LOG=info (or =debug) to see more.
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("debug"),
+        env_logger::Env::default().default_filter_or("warn"),
     )
     .init();
 
-    // Service management and config init don't require Accessibility — handle before the check.
     let args: Vec<String> = std::env::args().collect();
     let has_force = args.iter().any(|a| a == "--force");
+
+    // Service management and config commands run without Accessibility.
     match args.get(1).map(String::as_str) {
-        Some("--install-service")   => { menu::cli_install_service();        return; }
-        Some("--uninstall-service") => { menu::cli_uninstall_service();       return; }
+        Some("--help") | Some("-h") => { print_help(); return; }
+        Some("--install")           => { menu::cli_install();                 return; }
+        Some("--uninstall")         => { menu::cli_uninstall();               return; }
+        Some("--start")             => { menu::cli_start();                   return; }
+        Some("--stop")              => { menu::cli_stop();                    return; }
+        Some("--status")            => { menu::cli_status();                  return; }
         Some("--init-config")       => { menu::cli_init_config(has_force);    return; }
+        // Legacy aliases
+        Some("--install-service")   => { menu::cli_install_service();         return; }
+        Some("--uninstall-service") => { menu::cli_uninstall_service();       return; }
         _ => {}
     }
 
@@ -41,8 +51,6 @@ fn main() {
         }
     }
 
-    log::info!("Accessibility permission granted.");
-
     match args.get(1).map(String::as_str) {
         Some("--test-mouse") => { mouse::smoke_test(); return; }
         Some("--test-state") => { test_state(); return; }
@@ -58,8 +66,32 @@ fn main() {
     menu::install(mtm);
     event_tap::install();
 
-    log::info!("event tap installed — press Ctrl+Alt+Space to activate grid");
     unsafe { app.run(); }
+}
+
+fn print_help() {
+    println!(
+"keytogo — keyboard-only mouse navigation
+
+USAGE
+  keytogo [COMMAND]
+
+COMMANDS (no Accessibility required)
+  --install           install login service and start immediately
+  --uninstall         stop and remove login service
+  --start             start keytogo (via service if installed, else detached)
+  --stop              stop running keytogo (via service if installed, else pkill)
+  --status            show whether the service is installed and running
+  --init-config       write default config to ~/.config/keytogo/config.toml
+  --init-config --force   overwrite existing config
+
+  --help / -h         show this help
+
+When run with no arguments keytogo launches the overlay daemon (requires
+Accessibility permission). Use --start to launch it without keeping the
+terminal open.
+"
+    );
 }
 
 fn test_state() {

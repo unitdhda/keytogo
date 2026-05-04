@@ -91,6 +91,42 @@ pub fn layout_geom(
     }
 }
 
+// ── Dynamic sub layout ─────────────────────────────────────────────────────
+
+/// Pool for generating sub_l key rows (8 keys per row, 3 rows).
+/// Row ordering matches keyboard home-adjacent rows: top → mid → bottom.
+const SUB_KEY_POOL: [&str; 3] = ["ertyuiop", "dfghjkl;", "cvbnm,./"];
+
+/// Maximum sub_cols supported by the pool.
+const MAX_SUB_COLS: usize = 8;
+
+/// Compute `sub_cols` (with `sub_rows` fixed at 3) so that stage-3 subcell
+/// cells are as square as possible while the grid fills the screen exactly.
+///
+/// Derivation (bottom-up):
+///   square subcell ⟹ cell_w/sc_cols = cell_h/sc_rows
+///   ⟹ sub_cols/sub_rows = sw·macro_rows·sc_rows / (sh·macro_cols·sc_cols)
+///   With sub_rows=3: sub_cols = round(target × 3), capped at MAX_SUB_COLS.
+pub fn square_sub_cols(
+    sw: f64, sh: f64,
+    macro_cols: usize, macro_rows: usize,
+    sc_cols:    usize, sc_rows:    usize,
+) -> usize {
+    let target = sw * macro_rows as f64 * sc_rows as f64
+               / (sh * macro_cols as f64 * sc_cols as f64);
+    ((target * 3.0).round() as usize).max(1).min(MAX_SUB_COLS)
+}
+
+/// Build a sub_l layout string (3 rows, `sub_cols` keys each) from the pool.
+/// Always produces a valid, duplicate-free string accepted by `parse_layout_string`.
+pub fn generate_sub_layout(sub_cols: usize) -> String {
+    let cols = sub_cols.min(MAX_SUB_COLS).max(1);
+    SUB_KEY_POOL.iter()
+        .map(|row| row.chars().take(cols).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 // ── Keycode table ──────────────────────────────────────────────────────────
 
 /// macOS virtual keycode → printable char (ANSI QWERTY layout).
@@ -240,6 +276,69 @@ mod tests {
         let g = layout_geom(1920.0, 1080.0, 3, 4, 5, 3);
         assert!((g.cell_w - 128.0).abs() < 1e-9);
         assert!((g.cell_h -  90.0).abs() < 1e-9);
+    }
+
+    // ── square_sub_cols ───────────────────────────────────────────────────────
+
+    #[test]
+    fn square_sub_cols_16x9() {
+        // 4×6 macro, 6×3 subcell on 16:9 → sub_cols=4 gives exact squares
+        let cols = square_sub_cols(2560.0, 1440.0, 4, 6, 6, 3);
+        assert_eq!(cols, 4);
+        // Verify resulting cell_w/sc_cols == cell_h/sc_rows
+        let g = layout_geom(2560.0, 1440.0, 4, 6, cols, 3);
+        let sc_w = g.cell_w / 6.0;
+        let sc_h = g.cell_h / 3.0;
+        assert!((sc_w - sc_h).abs() < 1e-9, "not square: {sc_w:.4} ≠ {sc_h:.4}");
+    }
+
+    #[test]
+    fn square_sub_cols_1080p_16x9() {
+        let cols = square_sub_cols(1920.0, 1080.0, 4, 6, 6, 3);
+        assert_eq!(cols, 4);
+        let g = layout_geom(1920.0, 1080.0, 4, 6, cols, 3);
+        let sc_w = g.cell_w / 6.0;
+        let sc_h = g.cell_h / 3.0;
+        assert!((sc_w - sc_h).abs() < 1e-9);
+    }
+
+    #[test]
+    fn square_sub_cols_never_zero() {
+        let cols = square_sub_cols(800.0, 2400.0, 4, 6, 6, 3);
+        assert!(cols >= 1);
+    }
+
+    #[test]
+    fn square_sub_cols_capped_at_pool_max() {
+        let cols = square_sub_cols(10000.0, 1080.0, 4, 6, 6, 3);
+        assert!(cols <= MAX_SUB_COLS);
+    }
+
+    // ── generate_sub_layout ───────────────────────────────────────────────────
+
+    #[test]
+    fn generate_sub_layout_valid_parse() {
+        for cols in 1..=MAX_SUB_COLS {
+            let s = generate_sub_layout(cols);
+            let p = parse_layout_string(&s)
+                .unwrap_or_else(|e| panic!("generate_sub_layout({cols}) is invalid: {e}"));
+            assert_eq!(p.num_cols, cols, "wrong num_cols for sub_cols={cols}");
+            assert_eq!(p.num_rows, 3);
+        }
+    }
+
+    #[test]
+    fn generate_sub_layout_no_duplicates() {
+        let s = generate_sub_layout(8);
+        assert!(parse_layout_string(&s).is_ok());
+    }
+
+    #[test]
+    fn generate_sub_layout_4_matches_expected_keys() {
+        let p = parse_layout_string(&generate_sub_layout(4)).unwrap();
+        assert_eq!(p.keys[0], &['e', 'r', 't', 'y']);
+        assert_eq!(p.keys[1], &['d', 'f', 'g', 'h']);
+        assert_eq!(p.keys[2], &['c', 'v', 'b', 'n']);
     }
 
     // ── keycode table ──────────────────────────────────────────────────────

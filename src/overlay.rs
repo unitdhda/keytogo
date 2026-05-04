@@ -150,7 +150,7 @@ fn draw_subcell_layer(view: &OverlayView, cell_x: f64, cell_y: f64, cell_w: f64,
     let sc_cols = subcell_l.num_cols;
     let sc_rows = subcell_l.num_rows;
 
-    // Subcell grid fills the entire selected cell — cells are rectangular.
+    // Subcell grid fills the entire selected cell — cells are proportional.
     let sc_w = cell_w / sc_cols as f64;
     let sc_h = cell_h / sc_rows as f64;
 

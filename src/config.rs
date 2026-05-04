@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::sync::OnceLock;
 
-use crate::keymap::{parse_layout_string, ParsedLayout};
+use crate::keymap::{generate_sub_layout, parse_layout_string, square_sub_cols, ParsedLayout};
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 static PARSED: OnceLock<ParsedLayouts> = OnceLock::new();
@@ -16,14 +16,25 @@ pub fn get() -> &'static Config {
 pub fn parsed_layouts() -> &'static ParsedLayouts {
     PARSED.get_or_init(|| {
         let cfg = get();
-        ParsedLayouts {
-            macro_l:   parse_layout_string(&cfg.layout.macro_keys)
-                           .unwrap_or_else(|e| panic!("invalid [layout].macro_keys: {e}")),
-            sub_l:     parse_layout_string(&cfg.layout.sub_keys)
-                           .unwrap_or_else(|e| panic!("invalid [layout].sub_keys: {e}")),
-            subcell_l: parse_layout_string(&cfg.layout.subcell_keys)
-                           .unwrap_or_else(|e| panic!("invalid [layout].subcell_keys: {e}")),
-        }
+        let macro_l = parse_layout_string(&cfg.layout.macro_keys)
+            .unwrap_or_else(|e| panic!("invalid [layout].macro_keys: {e}"));
+        let subcell_l = parse_layout_string(&cfg.layout.subcell_keys)
+            .unwrap_or_else(|e| panic!("invalid [layout].subcell_keys: {e}"));
+        let sub_l = match &cfg.layout.sub_keys {
+            Some(s) => parse_layout_string(s)
+                .unwrap_or_else(|e| panic!("invalid [layout].sub_keys: {e}")),
+            None => {
+                let (sw, sh) = crate::mouse::screen_size();
+                let sub_cols = square_sub_cols(
+                    sw, sh,
+                    macro_l.num_cols, macro_l.num_rows,
+                    subcell_l.num_cols, subcell_l.num_rows,
+                );
+                parse_layout_string(&generate_sub_layout(sub_cols))
+                    .expect("internal: generated sub layout must be valid")
+            }
+        };
+        ParsedLayouts { macro_l, sub_l, subcell_l }
     })
 }
 
@@ -67,7 +78,9 @@ pub struct LayoutConfig {
     /// Stage 1 — selects which screen region. Each line = one keyboard row.
     pub macro_keys: String,
     /// Stage 2 — selects a sub-cell within the chosen region.
-    pub sub_keys: String,
+    /// `None` (default) = computed from screen dimensions for square subcells.
+    /// Set explicitly in config to override the auto-computed value.
+    pub sub_keys: Option<String>,
     /// Stage 3 — fine-positions the cursor inside the selected sub-cell (SubcellMode).
     pub subcell_keys: String,
 }
@@ -138,7 +151,7 @@ impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             macro_keys:   "qwer\nasdf\nzxcv\nyuio\nhjkl\nnm,.".into(),
-            sub_keys:     "ertyuio\ndfghjkl\ncvbnm,.".into(),
+            sub_keys:     None, // auto-computed from screen ratio at startup
             subcell_keys: "ertyui\ndfghjk\nxcvbnm".into(),
         }
     }

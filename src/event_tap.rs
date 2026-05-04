@@ -150,7 +150,6 @@ unsafe extern "C" fn tap_callback(
                 let lbl = if button == ClickButton::Right { "⌥Space" } else { "Space" };
                 overlay::show_scroll_hud(lbl, "click");
                 schedule_hud_fade(1.0);
-                log::info!("scroll hold released {:?}", button);
             }
             return std::ptr::null_mut();
         }
@@ -193,7 +192,6 @@ unsafe extern "C" fn tap_timer_callback(_timer: CFRunLoopTimerRef, _info: *mut c
             let state = &mut *STATE_PTR.load(Ordering::Relaxed);
             state.mode = AppMode::Idle;
             overlay::hide();
-            log::info!("click {:?} ×{} at ({:.0},{:.0}) → Idle", tap.button, tap.count, tap.x, tap.y);
         }
     });
     PENDING_TIMER.store(std::ptr::null_mut(), Ordering::Relaxed);
@@ -225,7 +223,6 @@ fn fire_pending_tap_now(state: &mut AppState) {
         if let Some(tap) = cell.take() {
             let pos = CGPoint::new(tap.x, tap.y);
             mouse::click(pos, tap.button, tap.count);
-            log::info!("click {:?} ×{} at ({:.0},{:.0}) (immediate)", tap.button, tap.count, tap.x, tap.y);
             state.mode = AppMode::Idle;
             overlay::hide();
         }
@@ -300,7 +297,6 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
             if layouts.macro_l.key_pos(ch).is_some() {
                 state.mode = AppMode::GridA { macro_first: Some(ch) };
                 overlay::show_grid_a(Some(ch));
-                log::debug!("grid_a macro='{ch}'");
             }
         }
         Some(mc) => {
@@ -322,18 +318,13 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
                     mouse::move_cursor(bounds.center_x(), bounds.center_y());
                     // Option alone = move cursor only; Option+Shift = proceed to subcell for drag
                     if flags & FLAGS_OPTION != 0 && flags & FLAGS_SHIFT == 0 {
-                        log::info!("move-only macro='{mc}' sub='{ch}' → Idle");
+                        log::info!("→ Idle (move)");
                         state.mode = AppMode::Idle;
                         overlay::hide();
                         return std::ptr::null_mut();
                     }
                     let button = modifier_button(flags);
-                    log::info!(
-                        "→ SubcellMode  macro='{mc}' sub='{ch}'  \
-                         cell=({:.0},{:.0} {:.0}×{:.0}) cursor=({:.0},{:.0})",
-                        cell_x, cell_y, bounds.w, bounds.h,
-                        bounds.center_x(), bounds.center_y()
-                    );
+                    log::info!("→ SubcellMode");
                     state.mode = AppMode::Subcell { bounds, button };
                     overlay::show_subcell(bounds.x, bounds.y, bounds.w, bounds.h);
                 }
@@ -380,17 +371,17 @@ fn on_subcell(
             fire_pending_tap_now(state);
             if let Some((ox, oy)) = state.drag_origin {
                 mouse::drag(CGPoint::new(ox, oy), pos);
-                log::info!("drag ({:.0},{:.0})→({:.0},{:.0}) → Idle", ox, oy, pos.x, pos.y);
             }
             state.mode = AppMode::Idle;
             overlay::hide();
+            log::info!("→ Idle (drag)");
             return std::ptr::null_mut();
         } else if flags & FLAGS_OPTION != 0 {
             fire_pending_tap_now(state);
             mouse::move_cursor(pos.x, pos.y);
             state.mode = AppMode::Idle;
             overlay::hide();
-            log::info!("move-only ({:.0},{:.0}) → Idle", pos.x, pos.y);
+            log::info!("→ Idle (move)");
             return std::ptr::null_mut();
         }
 
@@ -408,7 +399,6 @@ fn on_subcell(
                     cell.set(Some(t));
                 }
             });
-            log::debug!("subcell tap repeat key='{click_key}'");
         } else {
             fire_pending_tap_now(state);
             if matches!(state.mode, AppMode::Idle) {
@@ -417,7 +407,6 @@ fn on_subcell(
             PENDING_TAP.with(|cell| cell.set(Some(PendingTap {
                 x: pos.x, y: pos.y, button: btn, count: 1, key: click_key,
             })));
-            log::debug!("subcell tap key='{click_key}' at ({:.0},{:.0})", pos.x, pos.y);
         }
         schedule_tap_timer();
     }
@@ -463,7 +452,6 @@ fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
         let lbl = if button == ClickButton::Right { "⌥Space" } else { "Space" };
         overlay::show_scroll_hud(lbl, "holding…");
         schedule_hud_fade(1.0);
-        log::info!("scroll hold {:?} at ({:.0},{:.0})", button, pos.x, pos.y);
         return std::ptr::null_mut();
     }
 
@@ -482,7 +470,6 @@ fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
         let speed = if is_shift || ch == 'd' || ch == 'u' { " fast" } else { "" };
         overlay::show_scroll_hud(&key_label, &format!("{direction}{speed}"));
         schedule_hud_fade(1.0);
-        log::debug!("scroll '{key_label}' dy={dy} dx={dx}");
     }
 
     std::ptr::null_mut()
@@ -491,7 +478,7 @@ fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
 // ── Subcell geometry ───────────────────────────────────────────────────────
 
 /// Pixel position of a subcell key within the given cell bounds.
-/// The subcell grid fills the entire cell — cells are rectangular.
+/// The subcell grid fills the entire cell — cells are proportional.
 fn subcell_pos(key: char, bounds: &CellBounds) -> Option<CGPoint> {
     let subcell_l = &config::parsed_layouts().subcell_l;
     let (sub_col, sub_row) = subcell_l.key_pos(key)?;

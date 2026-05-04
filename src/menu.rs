@@ -28,6 +28,8 @@ static LAUNCH_ITEM: AtomicPtr<NSMenuItem> = AtomicPtr::new(std::ptr::null_mut())
 
 // ── Launch-agent helpers ───────────────────────────────────────────────────
 
+const LABEL: &str = "com.keytogo";
+
 fn launch_agents_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from(home).join("Library").join("LaunchAgents")
@@ -37,12 +39,20 @@ fn plist_path() -> PathBuf {
     launch_agents_dir().join("com.keytogo.plist")
 }
 
+/// `gui/<uid>` domain string for launchctl bootstrap/bootout.
+fn launchd_domain() -> String {
+    extern "C" { fn getuid() -> u32; }
+    format!("gui/{}", unsafe { getuid() })
+}
+
 pub fn is_launch_agent_installed() -> bool {
     plist_path().exists()
 }
 
 pub fn install_launch_agent() -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
+    // No KeepAlive — starts at login, does not auto-restart on quit.
+    // No log files — avoid writing key-event context to disk.
     let content = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -57,12 +67,6 @@ pub fn install_launch_agent() -> std::io::Result<()> {
     </array>
     <key>RunAtLoad</key>
     <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/keytogo.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/keytogo.log</string>
 </dict>
 </plist>
 "#,
@@ -70,21 +74,21 @@ pub fn install_launch_agent() -> std::io::Result<()> {
     );
     std::fs::create_dir_all(launch_agents_dir())?;
     std::fs::write(plist_path(), &content)?;
+    // bootstrap loads the plist and starts the agent immediately (RunAtLoad).
     let _ = std::process::Command::new("launchctl")
-        .args(["load", plist_path().to_str().unwrap_or("")])
+        .args(["bootstrap", &launchd_domain(), plist_path().to_str().unwrap_or("")])
         .status();
-    log::info!("launch agent installed at {}", plist_path().display());
     Ok(())
 }
 
 pub fn uninstall_launch_agent() -> std::io::Result<()> {
     let path = plist_path();
     if path.exists() {
+        // bootout stops the running agent and removes it from launchd.
         let _ = std::process::Command::new("launchctl")
-            .args(["unload", path.to_str().unwrap_or("")])
+            .args(["bootout", &launchd_domain(), path.to_str().unwrap_or("")])
             .status();
         std::fs::remove_file(&path)?;
-        log::info!("launch agent removed");
     }
     Ok(())
 }
@@ -272,20 +276,79 @@ pub fn install(mtm: MainThreadMarker) {
     let _ = Retained::into_raw(menu);
 }
 
-/// Install or uninstall the launch agent (called from CLI flags in main.rs).
-pub fn cli_install_service() {
+// ── CLI commands ───────────────────────────────────────────────────────────
+
+pub fn cli_install() {
+    if is_launch_agent_installed() {
+        eprintln!("already installed — run `keytogo --uninstall` first to reinstall");
+        std::process::exit(1);
+    }
     match install_launch_agent() {
-        Ok(()) => println!("keytogo launch agent installed. It will start on next login."),
-        Err(e) => eprintln!("failed to install launch agent: {e}"),
+        Ok(()) => println!("keytogo installed and started. It will relaunch at login."),
+        Err(e) => { eprintln!("install failed: {e}"); std::process::exit(1); }
     }
 }
 
-pub fn cli_uninstall_service() {
+pub fn cli_uninstall() {
+    if !is_launch_agent_installed() {
+        eprintln!("not installed");
+        std::process::exit(1);
+    }
     match uninstall_launch_agent() {
-        Ok(()) => println!("keytogo launch agent removed."),
-        Err(e) => eprintln!("failed to remove launch agent: {e}"),
+        Ok(()) => println!("keytogo stopped and removed."),
+        Err(e) => { eprintln!("uninstall failed: {e}"); std::process::exit(1); }
     }
 }
+
+pub fn cli_start() {
+    if is_launch_agent_installed() {
+        let _ = std::process::Command::new("launchctl")
+            .args(["start", LABEL])
+            .status();
+        println!("keytogo service started");
+    } else {
+        // Spawn detached — no controlling terminal, no wait.
+        let exe = std::env::current_exe().expect("cannot resolve binary path");
+        match std::process::Command::new(exe)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_)  => println!("keytogo started in background"),
+            Err(e) => { eprintln!("failed to start: {e}"); std::process::exit(1); }
+        }
+    }
+}
+
+pub fn cli_stop() {
+    if is_launch_agent_installed() {
+        let _ = std::process::Command::new("launchctl")
+            .args(["stop", LABEL])
+            .status();
+        println!("keytogo service stopped");
+    } else {
+        let _ = std::process::Command::new("pkill").args(["-x", "keytogo"]).status();
+        println!("keytogo stopped");
+    }
+}
+
+pub fn cli_status() {
+    let installed = is_launch_agent_installed();
+    println!("service installed : {}", if installed { "yes" } else { "no" });
+    if installed {
+        // launchctl list exits 0 and prints a line if the label is loaded.
+        let out = std::process::Command::new("launchctl")
+            .args(["list", LABEL])
+            .output();
+        let running = out.map(|o| o.status.success()).unwrap_or(false);
+        println!("service running   : {}", if running { "yes" } else { "no" });
+    }
+}
+
+// Keep old names as thin aliases for backwards compatibility.
+pub fn cli_install_service() { cli_install() }
+pub fn cli_uninstall_service() { cli_uninstall() }
 
 pub fn cli_init_config(force: bool) {
     let home = std::env::var("HOME").unwrap_or_default();
