@@ -72,7 +72,7 @@ cargo test
 
 ### Activation
 1. Launch app; grant Accessibility if prompted.
-2. Press **RCmd + LCmd + Space** → Layout A macrogrid overlay appears.
+2. Press **RCmd + Space** → Layout A macrogrid overlay appears.
 3. Press **Escape** → overlay hides, returns to Idle.
 
 ### Layout A click
