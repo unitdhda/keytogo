@@ -411,11 +411,15 @@ line_px = 60
 half_page_lines = 10
 
 [style]
-overlay_bg  = "#00000088"
-cell_border = "#ffffff33"
-label_color = "#ffffffff"
-active_cell = "#ffff0055"
-subcell_dot = "#00ff88cc"
+overlay_bg    = "#00000088"
+cell_border   = "#ffffff33"
+label_color   = "#ffffffff"
+font          = "monospace"
+label_size    = 16.0
+label_weight  = "regular"
+label_gravity = "NW"
+active_cell   = "#ffff0055"
+subcell_dot   = "#00ff88cc"
 
 [hud]
 # Where to anchor the scroll HUD pill.

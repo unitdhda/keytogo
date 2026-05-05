@@ -97,22 +97,41 @@ half_page_lines = 15
 
 ## [style]
 
-Overlay colors. All values are hex with alpha: `#RRGGBBAA`.
+Overlay styling. Colors use hex with alpha: `#RRGGBBAA`.
 
-| Key | Default | What it colors |
-|---|---|---|
-| `overlay_bg` | `"#00000088"` | full-screen dim background |
-| `cell_border` | `"#ffffff33"` | grid cell border lines |
-| `label_color` | `"#ffffffff"` | cell label text |
-| `active_cell` | `"#ffff0055"` | selected/highlighted cell fill |
-| `subcell_dot` | `"#00ff88cc"` | sub-cell position indicator |
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `overlay_bg` | string | `"#00000088"` | full-screen dim background |
+| `cell_border` | string | `"#ffffff33"` | grid cell border lines |
+| `label_color` | string | `"#ffffffff"` | cell label text |
+| `font` | string | `"monospace"` | `"monospace"` / `"mono"` = weighted system mono, `"user-monospace"` = fixed-pitch user font, any installed font name also works |
+| `label_size` | float | `16.0` | point size for main-grid labels |
+| `label_weight` | string | `"regular"` | `ultralight`, `thin`, `light`, `regular`, `medium`, `semibold`, `bold`, `heavy`, `black` |
+| `label_gravity` | string | `"NW"` | label anchor inside each cell: `C`/`CENTER`, `N`, `E`, `W`, `S`, `NE`, `NW`, `SE`, `SW` |
+| `subgrid_font` | string | inherits `font` | optional override for subgrid/subcell label font |
+| `subgrid_label_size` | float | inherits `label_size` | optional override for subgrid/subcell label point size |
+| `subgrid_label_weight` | string | inherits `label_weight` | optional override for subgrid/subcell label weight |
+| `subgrid_label_gravity` | string | inherits `label_gravity` | optional override for subgrid/subcell label placement |
+| `active_cell` | string | `"#ffff0055"` | selected/highlighted cell fill/stroke |
+| `subcell_dot` | string | `"#00ff88cc"` | sub-cell overlay fill/stroke |
 
-**Example:** lighter overlay, blue active-cell highlight.
+If `subgrid_*` keys are omitted, subgrid labels reuse the main `label_*` settings.
+
+**Example:** lighter overlay, bolder labels, top-right anchoring, with a smaller centered subgrid override.
 
 ```toml
 [style]
-overlay_bg  = "#00000055"
-active_cell = "#0088ff66"
+overlay_bg    = "#00000055"
+label_color   = "#ffffffff"
+font          = "monospace"
+label_size    = 18.0
+label_weight  = "bold"
+label_gravity = "NE"
+subgrid_font          = "PragmataPro Mono Liga"
+subgrid_label_size    = 12.0
+subgrid_label_weight  = "medium"
+subgrid_label_gravity = "C"
+active_cell   = "#0088ff66"
 ```
 
 ---
@@ -161,11 +180,15 @@ line_px         = 60
 half_page_lines = 10
 
 [style]
-overlay_bg  = "#00000088"
-cell_border = "#ffffff33"
-label_color = "#ffffffff"
-active_cell = "#ffff0055"
-subcell_dot = "#00ff88cc"
+overlay_bg    = "#00000088"
+cell_border   = "#ffffff33"
+label_color   = "#ffffffff"
+font          = "monospace"
+label_size    = 16.0
+label_weight  = "regular"
+label_gravity = "NW"
+active_cell   = "#ffff0055"
+subcell_dot   = "#00ff88cc"
 
 [hud]
 position = "bottom-center"   # bottom-center | bottom-left | bottom-right

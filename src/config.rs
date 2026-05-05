@@ -111,12 +111,20 @@ pub struct ScrollConfig {
     pub half_page_lines: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct StyleConfig {
     pub overlay_bg: String,
     pub cell_border: String,
     pub label_color: String,
+    pub font: String,
+    pub label_size: f64,
+    pub label_weight: String,
+    pub label_gravity: String,
+    pub subgrid_font: Option<String>,
+    pub subgrid_label_size: Option<f64>,
+    pub subgrid_label_weight: Option<String>,
+    pub subgrid_label_gravity: Option<String>,
     pub active_cell: String,
     pub subcell_dot: String,
 }
@@ -174,6 +182,14 @@ impl Default for StyleConfig {
             overlay_bg:  "#00000088".into(),
             cell_border: "#ffffff33".into(),
             label_color: "#ffffffff".into(),
+            font: "monospace".into(),
+            label_size: 16.0,
+            label_weight: "regular".into(),
+            label_gravity: "NW".into(),
+            subgrid_font: None,
+            subgrid_label_size: None,
+            subgrid_label_weight: None,
+            subgrid_label_gravity: None,
             active_cell: "#ffff0055".into(),
             subcell_dot: "#00ff88cc".into(),
         }

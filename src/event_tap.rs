@@ -13,13 +13,13 @@ use crate::{
 
 // ── Statics ────────────────────────────────────────────────────────────────
 
-static TAP_PORT:          AtomicPtr<c_void>    = AtomicPtr::new(std::ptr::null_mut());
-static STATE_PTR:         AtomicPtr<AppState>  = AtomicPtr::new(std::ptr::null_mut());
-static PENDING_TIMER:     AtomicPtr<c_void>    = AtomicPtr::new(std::ptr::null_mut());
-static SCROLL_HUD_TIMER:  AtomicPtr<c_void>    = AtomicPtr::new(std::ptr::null_mut());
+static TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static STATE_PTR: AtomicPtr<AppState> = AtomicPtr::new(std::ptr::null_mut());
+static PENDING_TIMER: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static SCROLL_HUD_TIMER: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
-static TAP_INITIALISED:   AtomicBool = AtomicBool::new(false);
-static TAP_TIMEOUT_COUNT: AtomicU32  = AtomicU32::new(0);
+static TAP_INITIALISED: AtomicBool = AtomicBool::new(false);
+static TAP_TIMEOUT_COUNT: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     static PENDING_TAP: Cell<Option<PendingTap>> = const { Cell::new(None) };
@@ -27,46 +27,46 @@ thread_local! {
 
 // ── FFI types ──────────────────────────────────────────────────────────────
 
-type CGEventTapProxy    = *mut c_void;
-type CGEventRef         = *mut c_void;
-type CFMachPortRef      = *mut c_void;
-type CFRunLoopRef       = *mut c_void;
+type CGEventTapProxy = *mut c_void;
+type CGEventRef = *mut c_void;
+type CFMachPortRef = *mut c_void;
+type CFRunLoopRef = *mut c_void;
 type CFRunLoopSourceRef = *mut c_void;
-type CFStringRef        = *const c_void;
-type CFAllocatorRef     = *const c_void;
-type CFIndex            = isize;
+type CFStringRef = *const c_void;
+type CFAllocatorRef = *const c_void;
+type CFIndex = isize;
 
 type CGEventTapCallBack = unsafe extern "C" fn(
-    proxy:      CGEventTapProxy,
+    proxy: CGEventTapProxy,
     event_type: u32,
-    event:      CGEventRef,
-    user_info:  *mut c_void,
+    event: CGEventRef,
+    user_info: *mut c_void,
 ) -> CGEventRef;
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const K_CG_SESSION_EVENT_TAP:            u32 = 1;
-const K_CG_HEAD_INSERT_EVENT_TAP:        u32 = 0;
-const K_CG_EVENT_TAP_OPTION_DEFAULT:     u32 = 0;
+const K_CG_SESSION_EVENT_TAP: u32 = 1;
+const K_CG_HEAD_INSERT_EVENT_TAP: u32 = 0;
+const K_CG_EVENT_TAP_OPTION_DEFAULT: u32 = 0;
 
-const K_CG_EVENT_KEY_DOWN:               u32 = 10;
-const K_CG_EVENT_KEY_UP:                 u32 = 11;
-const K_CG_EVENT_FLAGS_CHANGED:          u32 = 12;
-const K_CG_EVENT_TAP_DISABLED_TIMEOUT:   u32 = 0xFFFFFFFE;
-const K_CG_EVENT_TAP_DISABLED_USER:      u32 = 0xFFFFFFFF;
+const K_CG_EVENT_KEY_DOWN: u32 = 10;
+const K_CG_EVENT_KEY_UP: u32 = 11;
+const K_CG_EVENT_FLAGS_CHANGED: u32 = 12;
+const K_CG_EVENT_TAP_DISABLED_TIMEOUT: u32 = 0xFFFFFFFE;
+const K_CG_EVENT_TAP_DISABLED_USER: u32 = 0xFFFFFFFF;
 
 const K_CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
 
-const FLAGS_SHIFT:   u64 = 0x0002_0000;
+const FLAGS_SHIFT: u64 = 0x0002_0000;
 const FLAGS_CONTROL: u64 = 0x0004_0000;
-const FLAGS_OPTION:  u64 = 0x0008_0000; // kCGEventFlagMaskAlternate — move cursor only
-const FLAGS_CMD:     u64 = 0x0010_0000; // kCGEventFlagMaskCommand (either Cmd)
-const FLAGS_RCMD:    u64 = 0x0000_0010; // NX_DEVICERCMDKEYMASK (right Cmd only)
+const FLAGS_OPTION: u64 = 0x0008_0000; // kCGEventFlagMaskAlternate — move cursor only
+const FLAGS_CMD: u64 = 0x0010_0000; // kCGEventFlagMaskCommand (either Cmd)
+const FLAGS_RCMD: u64 = 0x0000_0010; // NX_DEVICERCMDKEYMASK (right Cmd only)
 
 const TAP_TIMER_DELAY: f64 = 0.250; // seconds — multi-click window
 
-const KEYCODE_TAB:    u16 = 0x30;
-const KEYCODE_SPACE:  u16 = 0x31;
+const KEYCODE_TAB: u16 = 0x30;
+const KEYCODE_SPACE: u16 = 0x31;
 const KEYCODE_ESCAPE: u16 = 0x35;
 const KEYCODE_RETURN: u16 = 0x24;
 const KEYCODE_DELETE: u16 = 0x33; // Backspace
@@ -86,8 +86,8 @@ type CFRunLoopTimerCallBack = unsafe extern "C" fn(timer: CFRunLoopTimerRef, inf
 extern "C" {
     fn CFMachPortCreateRunLoopSource(
         allocator: CFAllocatorRef,
-        port:      CFMachPortRef,
-        order:     CFIndex,
+        port: CFMachPortRef,
+        order: CFIndex,
     ) -> CFRunLoopSourceRef;
     fn CFRunLoopGetCurrent() -> CFRunLoopRef;
     fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
@@ -97,11 +97,11 @@ extern "C" {
     fn CFRunLoopTimerCreate(
         allocator: CFAllocatorRef,
         fire_date: f64,
-        interval:  f64,
-        flags:     u32,
-        order:     CFIndex,
-        callout:   CFRunLoopTimerCallBack,
-        context:   *mut c_void,
+        interval: f64,
+        flags: u32,
+        order: CFIndex,
+        callout: CFRunLoopTimerCallBack,
+        context: *mut c_void,
     ) -> CFRunLoopTimerRef;
     fn CFRunLoopTimerInvalidate(timer: CFRunLoopTimerRef);
     fn CFAbsoluteTimeGetCurrent() -> f64;
@@ -111,12 +111,12 @@ extern "C" {
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGEventTapCreate(
-        tap:                u32,
-        place:              u32,
-        options:            u32,
+        tap: u32,
+        place: u32,
+        options: u32,
         events_of_interest: u64,
-        callback:           CGEventTapCallBack,
-        user_info:          *mut c_void,
+        callback: CGEventTapCallBack,
+        user_info: *mut c_void,
     ) -> CFMachPortRef;
     fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
     fn CGEventGetFlags(event: CGEventRef) -> u64;
@@ -126,14 +126,12 @@ extern "C" {
 // ── Top-level callback ─────────────────────────────────────────────────────
 
 unsafe extern "C" fn tap_callback(
-    _proxy:     CGEventTapProxy,
+    _proxy: CGEventTapProxy,
     event_type: u32,
-    event:      CGEventRef,
-    user_info:  *mut c_void,
+    event: CGEventRef,
+    user_info: *mut c_void,
 ) -> CGEventRef {
-    if event_type == K_CG_EVENT_TAP_DISABLED_TIMEOUT
-        || event_type == K_CG_EVENT_TAP_DISABLED_USER
-    {
+    if event_type == K_CG_EVENT_TAP_DISABLED_TIMEOUT || event_type == K_CG_EVENT_TAP_DISABLED_USER {
         let port = TAP_PORT.load(Ordering::Acquire);
         if !port.is_null() {
             let n = TAP_TIMEOUT_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
@@ -156,7 +154,11 @@ unsafe extern "C" fn tap_callback(
             if let Some((_, _, button)) = state.held_click.take() {
                 let pos = mouse::cursor_pos();
                 mouse::mouse_up(pos, button);
-                let lbl = if button == ClickButton::Right { "⌥Space" } else { "Space" };
+                let lbl = if button == ClickButton::Right {
+                    "⌥Space"
+                } else {
+                    "Space"
+                };
                 overlay::show_scroll_hud(lbl, "click");
                 schedule_hud_fade(1.0);
             }
@@ -179,15 +181,19 @@ unsafe extern "C" fn tap_callback(
         return event;
     }
 
-    let kc    = CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) as u16;
+    let kc = CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) as u16;
     let flags = CGEventGetFlags(event);
-    let mode  = state.mode.clone();
+    let mode = state.mode.clone();
 
     match mode {
-        AppMode::Idle                    => on_idle(state, kc, flags, event),
-        AppMode::GridA { macro_first }   => on_grid_a(state, kc, flags, macro_first),
-        AppMode::Subcell { bounds, button, macro_key } => on_subcell(state, kc, flags, bounds, button, macro_key),
-        AppMode::Scroll                  => on_scroll(state, kc, flags),
+        AppMode::Idle => on_idle(state, kc, flags, event),
+        AppMode::GridA { macro_first } => on_grid_a(state, kc, flags, macro_first),
+        AppMode::Subcell {
+            bounds,
+            button,
+            macro_key,
+        } => on_subcell(state, kc, flags, bounds, button, macro_key),
+        AppMode::Scroll => on_scroll(state, kc, flags),
     }
 }
 
@@ -209,7 +215,10 @@ unsafe extern "C" fn tap_timer_callback(_timer: CFRunLoopTimerRef, _info: *mut c
 fn cancel_pending_timer() {
     let old = PENDING_TIMER.swap(std::ptr::null_mut(), Ordering::AcqRel);
     if !old.is_null() {
-        unsafe { CFRunLoopTimerInvalidate(old); CFRelease(old as *const c_void); }
+        unsafe {
+            CFRunLoopTimerInvalidate(old);
+            CFRelease(old as *const c_void);
+        }
     }
 }
 
@@ -218,11 +227,18 @@ fn schedule_tap_timer() {
     let fire_at = unsafe { CFAbsoluteTimeGetCurrent() } + TAP_TIMER_DELAY;
     let timer = unsafe {
         CFRunLoopTimerCreate(
-            std::ptr::null(), fire_at, 0.0, 0, 0,
-            tap_timer_callback, std::ptr::null_mut(),
+            std::ptr::null(),
+            fire_at,
+            0.0,
+            0,
+            0,
+            tap_timer_callback,
+            std::ptr::null_mut(),
         )
     };
-    unsafe { CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, kCFRunLoopCommonModes); }
+    unsafe {
+        CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, kCFRunLoopCommonModes);
+    }
     PENDING_TIMER.store(timer, Ordering::Release);
 }
 
@@ -248,7 +264,10 @@ unsafe extern "C" fn hud_fade_callback(_timer: CFRunLoopTimerRef, _info: *mut c_
 fn cancel_hud_timer() {
     let old = SCROLL_HUD_TIMER.swap(std::ptr::null_mut(), Ordering::AcqRel);
     if !old.is_null() {
-        unsafe { CFRunLoopTimerInvalidate(old); CFRelease(old as *const c_void); }
+        unsafe {
+            CFRunLoopTimerInvalidate(old);
+            CFRelease(old as *const c_void);
+        }
     }
 }
 
@@ -257,11 +276,18 @@ fn schedule_hud_fade(delay_secs: f64) {
     let fire_at = unsafe { CFAbsoluteTimeGetCurrent() } + delay_secs;
     let timer = unsafe {
         CFRunLoopTimerCreate(
-            std::ptr::null(), fire_at, 0.0, 0, 0,
-            hud_fade_callback, std::ptr::null_mut(),
+            std::ptr::null(),
+            fire_at,
+            0.0,
+            0,
+            0,
+            hud_fade_callback,
+            std::ptr::null_mut(),
         )
     };
-    unsafe { CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, kCFRunLoopCommonModes); }
+    unsafe {
+        CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, kCFRunLoopCommonModes);
+    }
     SCROLL_HUD_TIMER.store(timer, Ordering::Release);
 }
 
@@ -284,6 +310,40 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
         state.mode = AppMode::Idle;
         overlay::hide();
         log::info!("→ Idle");
+        return std::ptr::null_mut();
+    }
+
+    if kc == KEYCODE_SPACE {
+        let pos = mouse::cursor_pos();
+        let btn = modifier_button(flags);
+
+        let is_repeat = PENDING_TAP.with(|cell| cell.get().is_some_and(|t| t.key == ' '));
+        if is_repeat {
+            PENDING_TAP.with(|cell| {
+                if let Some(mut t) = cell.get() {
+                    t.count = (t.count + 1).min(3);
+                    cell.set(Some(t));
+                }
+            });
+        } else {
+            // fire any unrelated pending tap first
+            fire_pending_tap_now(state);
+            if matches!(state.mode, AppMode::Idle) {
+                return std::ptr::null_mut(); // already resolved
+            }
+            PENDING_TAP.with(|cell| {
+                cell.set(Some(PendingTap {
+                    x: pos.x,
+                    y: pos.y,
+                    button: btn,
+                    count: 1,
+                    key: ' ',
+                }))
+            });
+        }
+        schedule_tap_timer();
+        // Stay in GridA so repeated Space presses accumulate clicks.
+        // tap_timer_callback will fire, call click, set Idle, hide overlay.
         return std::ptr::null_mut();
     }
 
@@ -320,21 +380,26 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
     match macro_first {
         None => {
             if layouts.macro_l.key_pos(ch).is_some() {
-                state.mode = AppMode::GridA { macro_first: Some(ch) };
+                state.mode = AppMode::GridA {
+                    macro_first: Some(ch),
+                };
                 overlay::show_grid_a(Some(ch));
             }
         }
         Some(mc) => {
             let macro_pos = layouts.macro_l.key_pos(mc);
-            let sub_pos   = layouts.sub_l.key_pos(ch);
+            let sub_pos = layouts.sub_l.key_pos(ch);
 
             match (macro_pos, sub_pos) {
                 (Some((macro_col, macro_row)), Some((sub_col, sub_row))) => {
                     let (sw, sh) = mouse::screen_size();
                     let g = layout_geom(
-                        sw, sh,
-                        layouts.macro_l.num_cols, layouts.macro_l.num_rows,
-                        layouts.sub_l.num_cols,   layouts.sub_l.num_rows,
+                        sw,
+                        sh,
+                        layouts.macro_l.num_cols,
+                        layouts.macro_l.num_rows,
+                        layouts.sub_l.num_cols,
+                        layouts.sub_l.num_rows,
                     );
                     let cell_x = macro_col as f64 * g.macro_w + sub_col as f64 * g.cell_w;
                     let cell_y = macro_row as f64 * g.macro_h + sub_row as f64 * g.cell_h;
@@ -350,7 +415,11 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
                     }
                     let button = modifier_button(flags);
                     log::info!("→ SubcellMode");
-                    state.mode = AppMode::Subcell { bounds, button, macro_key: mc };
+                    state.mode = AppMode::Subcell {
+                        bounds,
+                        button,
+                        macro_key: mc,
+                    };
                     overlay::show_subcell(bounds.x, bounds.y, bounds.w, bounds.h);
                 }
                 _ => {
@@ -366,11 +435,11 @@ fn on_grid_a(state: &mut AppState, kc: u16, flags: u64, macro_first: Option<char
 }
 
 fn on_subcell(
-    state:     &mut AppState,
-    kc:        u16,
-    flags:     u64,
-    bounds:    CellBounds,
-    button:    ClickButton,
+    state: &mut AppState,
+    kc: u16,
+    flags: u64,
+    bounds: CellBounds,
+    button: ClickButton,
     macro_key: char,
 ) -> CGEventRef {
     if kc == KEYCODE_ESCAPE {
@@ -384,14 +453,19 @@ fn on_subcell(
     }
 
     if kc == KEYCODE_DELETE {
-        state.mode = AppMode::GridA { macro_first: Some(macro_key) };
+        state.mode = AppMode::GridA {
+            macro_first: Some(macro_key),
+        };
         overlay::show_grid_a(Some(macro_key));
         log::info!("← GridA macro_first={macro_key} (backspace)");
         return std::ptr::null_mut();
     }
 
     let (click_pos, click_key) = if kc == KEYCODE_SPACE || kc == KEYCODE_RETURN {
-        (Some(CGPoint::new(bounds.center_x(), bounds.center_y())), ' ')
+        (
+            Some(CGPoint::new(bounds.center_x(), bounds.center_y())),
+            ' ',
+        )
     } else if let Some(ch) = keycode_to_char(kc) {
         (subcell_pos(ch, &bounds), ch)
     } else {
@@ -421,9 +495,7 @@ fn on_subcell(
         let btn = modifier_button_with_default(flags, button);
         mouse::move_cursor(pos.x, pos.y);
 
-        let is_repeat = PENDING_TAP.with(|cell| {
-            cell.get().is_some_and(|t| t.key == click_key)
-        });
+        let is_repeat = PENDING_TAP.with(|cell| cell.get().is_some_and(|t| t.key == click_key));
 
         if is_repeat {
             PENDING_TAP.with(|cell| {
@@ -437,9 +509,15 @@ fn on_subcell(
             if matches!(state.mode, AppMode::Idle) {
                 return std::ptr::null_mut();
             }
-            PENDING_TAP.with(|cell| cell.set(Some(PendingTap {
-                x: pos.x, y: pos.y, button: btn, count: 1, key: click_key,
-            })));
+            PENDING_TAP.with(|cell| {
+                cell.set(Some(PendingTap {
+                    x: pos.x,
+                    y: pos.y,
+                    button: btn,
+                    count: 1,
+                    key: click_key,
+                }))
+            });
         }
         schedule_tap_timer();
     }
@@ -449,8 +527,8 @@ fn on_subcell(
 
 fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
     let cfg = &config::get().scroll;
-    let is_shift  = flags & FLAGS_SHIFT != 0;
-    let step      = if is_shift { 9_i32 } else { 3_i32 };
+    let is_shift = flags & FLAGS_SHIFT != 0;
+    let step = if is_shift { 9_i32 } else { 3_i32 };
     let half_page = cfg.half_page_lines as i32;
 
     if kc == KEYCODE_ESCAPE || kc == KEYCODE_TAB {
@@ -479,10 +557,18 @@ fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
             return std::ptr::null_mut();
         }
         let pos = mouse::cursor_pos();
-        let button = if flags & FLAGS_OPTION != 0 { ClickButton::Right } else { ClickButton::Left };
+        let button = if flags & FLAGS_OPTION != 0 {
+            ClickButton::Right
+        } else {
+            ClickButton::Left
+        };
         mouse::mouse_down(pos, button);
         state.held_click = Some((pos.x, pos.y, button));
-        let lbl = if button == ClickButton::Right { "⌥Space" } else { "Space" };
+        let lbl = if button == ClickButton::Right {
+            "⌥Space"
+        } else {
+            "Space"
+        };
         overlay::show_scroll_hud(lbl, "holding…");
         schedule_hud_fade(1.0);
         return std::ptr::null_mut();
@@ -499,8 +585,16 @@ fn on_scroll(state: &mut AppState, kc: u16, flags: u64) -> CGEventRef {
             _ => return std::ptr::null_mut(),
         };
         mouse::scroll(dy, dx);
-        let key_label = if is_shift { format!("⇧{ch}") } else { ch.to_string() };
-        let speed = if is_shift || ch == 'd' || ch == 'u' { " fast" } else { "" };
+        let key_label = if is_shift {
+            format!("⇧{ch}")
+        } else {
+            ch.to_string()
+        };
+        let speed = if is_shift || ch == 'd' || ch == 'u' {
+            " fast"
+        } else {
+            ""
+        };
         overlay::show_scroll_hud(&key_label, &format!("{direction}{speed}"));
         schedule_hud_fade(1.0);
     }
@@ -606,7 +700,9 @@ fn setup_tap(block: bool) {
 pub fn pause() {
     let port = TAP_PORT.load(Ordering::Acquire);
     if !port.is_null() {
-        unsafe { CGEventTapEnable(port, false); }
+        unsafe {
+            CGEventTapEnable(port, false);
+        }
         log::info!("event tap paused");
     }
 }
@@ -615,7 +711,9 @@ pub fn pause() {
 pub fn resume() {
     let port = TAP_PORT.load(Ordering::Acquire);
     if !port.is_null() {
-        unsafe { CGEventTapEnable(port, true); }
+        unsafe {
+            CGEventTapEnable(port, true);
+        }
         log::info!("event tap resumed");
     }
 }
@@ -688,7 +786,11 @@ mod tests {
 
     #[test]
     fn event_mask_multiple() {
-        let m = event_mask(&[K_CG_EVENT_KEY_DOWN, K_CG_EVENT_KEY_UP, K_CG_EVENT_FLAGS_CHANGED]);
+        let m = event_mask(&[
+            K_CG_EVENT_KEY_DOWN,
+            K_CG_EVENT_KEY_UP,
+            K_CG_EVENT_FLAGS_CHANGED,
+        ]);
         assert!(m & (1 << K_CG_EVENT_KEY_DOWN) != 0);
         assert!(m & (1 << K_CG_EVENT_KEY_UP) != 0);
         assert!(m & (1 << K_CG_EVENT_FLAGS_CHANGED) != 0);
@@ -703,8 +805,14 @@ mod tests {
 
     #[test]
     fn modifier_no_flags_uses_default() {
-        assert_eq!(modifier_button_with_default(0, ClickButton::Left), ClickButton::Left);
-        assert_eq!(modifier_button_with_default(0, ClickButton::Middle), ClickButton::Middle);
+        assert_eq!(
+            modifier_button_with_default(0, ClickButton::Left),
+            ClickButton::Left
+        );
+        assert_eq!(
+            modifier_button_with_default(0, ClickButton::Middle),
+            ClickButton::Middle
+        );
     }
 
     #[test]
@@ -735,7 +843,13 @@ mod tests {
 
     #[test]
     fn pending_tap_fields() {
-        let t = PendingTap { x: 10.0, y: 20.0, button: ClickButton::Left, count: 2, key: 'f' };
+        let t = PendingTap {
+            x: 10.0,
+            y: 20.0,
+            button: ClickButton::Left,
+            count: 2,
+            key: 'f',
+        };
         assert_eq!(t.count, 2);
         assert_eq!(t.key, 'f');
         assert!((t.x - 10.0).abs() < 1e-9);
@@ -743,7 +857,13 @@ mod tests {
 
     #[test]
     fn pending_tap_count_caps_at_3() {
-        let mut t = PendingTap { x: 0.0, y: 0.0, button: ClickButton::Left, count: 3, key: 'f' };
+        let mut t = PendingTap {
+            x: 0.0,
+            y: 0.0,
+            button: ClickButton::Left,
+            count: 3,
+            key: 'f',
+        };
         t.count = (t.count + 1).min(3);
         assert_eq!(t.count, 3);
     }
@@ -777,16 +897,17 @@ mod tests {
     #[test]
     fn modifier_flag_constants_are_pairwise_disjoint() {
         let named = [
-            ("SHIFT",   FLAGS_SHIFT),
+            ("SHIFT", FLAGS_SHIFT),
             ("CONTROL", FLAGS_CONTROL),
-            ("OPTION",  FLAGS_OPTION),
-            ("CMD",     FLAGS_CMD),
-            ("RCMD",    FLAGS_RCMD),
+            ("OPTION", FLAGS_OPTION),
+            ("CMD", FLAGS_CMD),
+            ("RCMD", FLAGS_RCMD),
         ];
         for (i, &(name_a, a)) in named.iter().enumerate() {
             for &(name_b, b) in &named[i + 1..] {
                 assert_eq!(
-                    a & b, 0,
+                    a & b,
+                    0,
                     "flag constants overlap: {name_a}({a:#010x}) & {name_b}({b:#010x})"
                 );
             }
@@ -796,9 +917,9 @@ mod tests {
     #[test]
     fn activation_requires_both_cmd_flags() {
         assert_eq!((FLAGS_CMD | FLAGS_RCMD) & ACTIVATION_MODS, ACTIVATION_MODS);
-        assert_ne!(FLAGS_CMD   & ACTIVATION_MODS, ACTIVATION_MODS);
-        assert_ne!(FLAGS_RCMD  & ACTIVATION_MODS, ACTIVATION_MODS);
-        assert_ne!(0u64        & ACTIVATION_MODS, ACTIVATION_MODS);
+        assert_ne!(FLAGS_CMD & ACTIVATION_MODS, ACTIVATION_MODS);
+        assert_ne!(FLAGS_RCMD & ACTIVATION_MODS, ACTIVATION_MODS);
+        assert_ne!(0u64 & ACTIVATION_MODS, ACTIVATION_MODS);
         assert_ne!(FLAGS_SHIFT & ACTIVATION_MODS, ACTIVATION_MODS);
     }
 
@@ -819,10 +940,13 @@ mod tests {
             FLAGS_CMD | FLAGS_SHIFT | FLAGS_OPTION,
         ];
         for &f in &samples {
-            let is_drag      = f & FLAGS_OPTION != 0 && f & FLAGS_SHIFT != 0;
+            let is_drag = f & FLAGS_OPTION != 0 && f & FLAGS_SHIFT != 0;
             let is_move_only = f & FLAGS_OPTION != 0 && f & FLAGS_SHIFT == 0;
-            let is_click     = f & FLAGS_OPTION == 0;
-            let count = [is_drag, is_move_only, is_click].iter().filter(|&&b| b).count();
+            let is_click = f & FLAGS_OPTION == 0;
+            let count = [is_drag, is_move_only, is_click]
+                .iter()
+                .filter(|&&b| b)
+                .count();
             assert_eq!(
                 count, 1,
                 "flags {f:#010x}: expected exactly 1 subcell action, got {count}"
@@ -835,7 +959,11 @@ mod tests {
         let drag_flags = FLAGS_OPTION | FLAGS_SHIFT;
         let move_flags = FLAGS_OPTION;
         assert_ne!(drag_flags & FLAGS_SHIFT, 0, "drag requires Shift bit set");
-        assert_eq!(move_flags & FLAGS_SHIFT, 0, "move-only must not have Shift bit");
+        assert_eq!(
+            move_flags & FLAGS_SHIFT,
+            0,
+            "move-only must not have Shift bit"
+        );
     }
 
     // ── Keybind conflict: grid mode Tab → scroll ─────────────────────────────
@@ -868,11 +996,11 @@ mod tests {
     #[test]
     fn modifier_button_shift_wins_over_ctrl() {
         let combos: &[(u64, ClickButton)] = &[
-            (FLAGS_SHIFT,                 ClickButton::Right),
-            (FLAGS_CONTROL,               ClickButton::Middle),
+            (FLAGS_SHIFT, ClickButton::Right),
+            (FLAGS_CONTROL, ClickButton::Middle),
             (FLAGS_SHIFT | FLAGS_CONTROL, ClickButton::Right),
-            (FLAGS_OPTION,                ClickButton::Left),
-            (0,                           ClickButton::Left),
+            (FLAGS_OPTION, ClickButton::Left),
+            (0, ClickButton::Left),
         ];
         for &(flags, expected) in combos {
             assert_eq!(
@@ -886,13 +1014,17 @@ mod tests {
     #[test]
     fn modifier_button_right_and_middle_never_both_true() {
         let samples = [
-            0u64, FLAGS_SHIFT, FLAGS_CONTROL, FLAGS_SHIFT | FLAGS_CONTROL, FLAGS_OPTION,
+            0u64,
+            FLAGS_SHIFT,
+            FLAGS_CONTROL,
+            FLAGS_SHIFT | FLAGS_CONTROL,
+            FLAGS_OPTION,
         ];
         for &f in &samples {
             let _ = modifier_button_with_default(f, ClickButton::Left);
         }
         assert_ne!(
-            modifier_button_with_default(FLAGS_SHIFT,   ClickButton::Left),
+            modifier_button_with_default(FLAGS_SHIFT, ClickButton::Left),
             modifier_button_with_default(FLAGS_CONTROL, ClickButton::Left),
             "Shift and Ctrl must produce different buttons"
         );

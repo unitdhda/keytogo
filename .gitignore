@@ -2,3 +2,4 @@
 target/
 agents.md
 claude.md
+.claude/
