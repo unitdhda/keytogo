@@ -100,7 +100,7 @@ if [ -z "$FOUND_BIN" ]; then
   exit 1
 fi
 
-# ── Install (user-level, no sudo) ─────────────────────────────────────────────
+# ── Install (user-level) ──────────────────────────────────────────────────────
 
 mkdir -p "$INSTALL_DIR"
 DEST="${INSTALL_DIR}/${BIN}"
@@ -109,58 +109,25 @@ mv "$FOUND_BIN" "$DEST"
 chmod +x "$DEST"
 rm -rf "$TMP"
 
-# ── PATH check ────────────────────────────────────────────────────────────────
-
-case ":$PATH:" in
-  *":$INSTALL_DIR:"*)
-    PATH_OK=1
-    ;;
-  *)
-    PATH_OK=0
-    ;;
-esac
-
 echo ""
 echo "keytogo ${LATEST} installed to ${DEST}"
 
-# ── Offer PATH setup ──────────────────────────────────────────────────────────
+# ── PATH hint ─────────────────────────────────────────────────────────────────
 
-if [ "$PATH_OK" -eq 0 ]; then
-  echo ""
-  echo "⚠️  ${INSTALL_DIR} is not in your PATH."
-
-  SHELL_NAME="$(basename "$SHELL")"
-
-  case "$SHELL_NAME" in
-    zsh) RC_FILE="$HOME/.zshrc" ;;
-    bash) RC_FILE="$HOME/.bashrc" ;;
-    fish) RC_FILE="$HOME/.config/fish/config.fish" ;;
-    *)
-      RC_FILE=""
-      ;;
-  esac
-
-  echo ""
-  echo "Add it manually with:"
-  echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
-
-  if [ -n "$RC_FILE" ]; then
+case ":$PATH:" in
+  *":$INSTALL_DIR:"*)
+    ;;
+  *)
     echo ""
-    printf "Would you like me to add it to %s? [y/N] " "$RC_FILE"
-    read ans
-
-    if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
-      if [ "$SHELL_NAME" = "fish" ]; then
-        echo "set -gx PATH ${INSTALL_DIR} \$PATH" >> "$RC_FILE"
-      else
-        echo "export PATH=\"${INSTALL_DIR}:\$PATH\"" >> "$RC_FILE"
-      fi
-      echo "✔ PATH updated. Restart your shell."
-    else
-      echo "Skipped PATH update."
-    fi
-  fi
-fi
+    echo "⚠️  ${INSTALL_DIR} is not in your PATH."
+    echo ""
+    echo "Add it by running:"
+    echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+    echo ""
+    echo "And add that line to your shell config:"
+    echo "  ~/.zshrc (zsh) or ~/.bashrc (bash)"
+    ;;
+esac
 
 echo ""
 echo "Next steps:"
