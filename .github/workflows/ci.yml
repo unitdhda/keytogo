@@ -11,11 +11,15 @@ on:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Test (${{ matrix.name }})
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
     strategy:
       matrix:
-        os: [macos-14, macos-13]
+        include:
+          - name: macos-14
+            runs_on: '["macos-14"]'
+          - name: macos-arm64-local
+            runs_on: '["self-hosted", "macOS", "ARM64"]'
 
     steps:
       - uses: actions/checkout@v5

@@ -11,15 +11,14 @@ permissions:
 jobs:
   build:
     name: Build (${{ matrix.target }})
-    runs-on: macos-14
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
     strategy:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            runner: macos-14       # native Apple Silicon
+            runs_on: '["macos-14"]'
           - target: x86_64-apple-darwin
-            runner: macos-14       # native Intel
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+            runs_on: '["self-hosted", "macOS", "ARM64"]'
 
     steps:
       - uses: actions/checkout@v5
