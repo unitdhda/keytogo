@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/237cbb22-5714-4ad8-b69d-245ef4f5600e
 Downloads and installs the latest pre-built binary for your architecture:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/unitf90/keytogo/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/unitdhda/keytogo/refs/heads/main/install.sh | sh
 ```
 
 ### Install with Cargo
