@@ -18,6 +18,14 @@ Downloads and installs the latest pre-built binary for your architecture:
 curl -fsSL https://raw.githubusercontent.com/unitf90/keytogo/main/install.sh | sh
 ```
 
+### Install with Cargo
+
+Install the published crate directly from crates.io:
+
+```sh
+cargo install keytogo
+```
+
 ### Download a release binary
 
 Grab the latest archive from the [Releases page](https://github.com/unitf90/keytogo/releases):
@@ -32,7 +40,7 @@ tar -xzf keytogo-*.tar.gz
 sudo mv keytogo /usr/local/bin/
 ```
 
-### Build from source
+### Build from the latest Git revision
 
 Requires the Rust toolchain (`rustup.rs`):
 
